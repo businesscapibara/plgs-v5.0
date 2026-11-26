@@ -6,7 +6,7 @@ Base: Infinite Yield 6.4.2 completo com um terminal simples de comandos.
 - Terminal simples para executar comandos IY: `iy <comando>` ou comando IY direto.
 - Botão X para minimizar e ícone para restaurar o terminal (asset 7008158106).
 - Removidos os comandos/remotes do Debug Terminal original e todo o código de aimbot.
-- Integrados: Gun Patcher (`gun`), Auto Escape manual (`escape`) e config do ESP (`espcfg`).
+- Integrados: Gun Patcher (`gun`), Auto Escape manual (`escape`) e ESP novo (`esp`; o do IY segue em `iy esp`).
 Execução conforme seu ambiente: Command Bar no contexto Client durante Play.
 ]=]
 
@@ -5739,76 +5739,12 @@ end)
 ESPenabled = false
 CHMSenabled = false
 
--- ESPCFG: configuração do ESP (controlada pelo terminal: espcfg ...). Padrões = comportamento original.
-ESPCFG = {
-	color = nil,          -- Color3 global (nil = cor do time, original)
-	teamColors = {},      -- ["nome do time minúsculo"] = Color3
-	filter = "all",       -- all | enemy | ally | list
-	teams = {},           -- ["nome do time minúsculo"] = true (filter = list)
-	showName = true,
-	logic = nil,
-}
-function ESPCFG.allow(plr)
-	local lp = Players.LocalPlayer
-	local f = ESPCFG.filter
-	if f == "all" then return true end
-	if f == "enemy" then return plr.Team ~= lp.Team end
-	if f == "ally" then return plr.Team == lp.Team end
-	if f == "list" then return plr.Team ~= nil and ESPCFG.teams[plr.Team.Name:lower()] == true end
-	return true
-end
-function ESPCFG.colorFor(plr)
-	local t = plr.Team
-	if t and ESPCFG.teamColors[t.Name:lower()] then return ESPCFG.teamColors[t.Name:lower()] end
-	return ESPCFG.color
-end
-function ESPCFG.text(plr, health, studs)
-	local parts = {}
-	if ESPCFG.showName then parts[#parts + 1] = 'Name: '..plr.Name end
-	if health ~= nil then parts[#parts + 1] = 'Health: '..health end
-	if studs ~= nil then parts[#parts + 1] = 'Studs: '..studs end
-	return table.concat(parts, ' | ')
-end
--- apply: atualiza o ESP ja existente (cor / filtro de times) sem derrubar tudo.
--- O nome e lido a cada frame pelo loop do ESP (ESPCFG.text), entao nao precisa de refresh.
-function ESPCFG.apply()
-	if not ESPenabled then return end
-	local lp = Players.LocalPlayer
-	for _, plr in ipairs(Players:GetPlayers()) do
-		if plr ~= lp then
-			local folder = COREGUI:FindFirstChild(plr.Name..'_ESP')
-			if ESPCFG.allow(plr) then
-				if folder then
-					local cc = ESPCFG.colorFor(plr)
-					for _, d in ipairs(folder:GetChildren()) do
-						if d:IsA("BoxHandleAdornment") then
-							if cc then
-								d.Color3 = cc
-							elseif ESPCFG.logic == true then
-								d.Color = BrickColor.new(plr.TeamColor == lp.TeamColor and "Bright green" or "Bright red")
-							else
-								d.Color = plr.TeamColor
-							end
-						end
-					end
-				else
-					ESP(plr, ESPCFG.logic)
-				end
-			elseif folder then
-				folder:Destroy()
-			end
-		end
-	end
-end
-pcall(function() getgenv().ESPCFG = ESPCFG end)
-
 function round(num, numDecimalPlaces)
 	local mult = 10^(numDecimalPlaces or 0)
 	return math.floor(num * mult + 0.5) / mult
 end
 
 function ESP(plr, logic)
-	ESPCFG.logic = logic
 	task.spawn(function()
 		for i,v in pairs(COREGUI:GetChildren()) do
 			if v.Name == plr.Name..'_ESP' then
@@ -5816,7 +5752,7 @@ function ESP(plr, logic)
 			end
 		end
 		wait()
-		if plr.Character and plr.Name ~= Players.LocalPlayer.Name and ESPCFG.allow(plr) and not COREGUI:FindFirstChild(plr.Name..'_ESP') then
+		if plr.Character and plr.Name ~= Players.LocalPlayer.Name and not COREGUI:FindFirstChild(plr.Name..'_ESP') then
 			local ESPholder = Instance.new("Folder")
 			ESPholder.Name = plr.Name..'_ESP'
 			ESPholder.Parent = COREGUI
@@ -5836,8 +5772,6 @@ function ESP(plr, logic)
 					else
 						a.Color = plr.TeamColor
 					end
-					local customColor = ESPCFG.colorFor(plr)
-					if customColor then a.Color3 = customColor end
 				end
 			end
 			if plr.Character and plr.Character:FindFirstChild('Head') then
@@ -5858,7 +5792,7 @@ function ESP(plr, logic)
 				TextLabel.TextColor3 = Color3.new(1, 1, 1)
 				TextLabel.TextStrokeTransparency = 0
 				TextLabel.TextYAlignment = Enum.TextYAlignment.Bottom
-				TextLabel.Text = ESPCFG.text(plr)
+				TextLabel.Text = 'Name: '..plr.Name
 				TextLabel.ZIndex = 10
 				local espLoopFunc
 				local teamChange
@@ -5892,7 +5826,7 @@ function ESP(plr, logic)
 					if COREGUI:FindFirstChild(plr.Name..'_ESP') then
 						if plr.Character and getRoot(plr.Character) and plr.Character:FindFirstChildOfClass("Humanoid") and Players.LocalPlayer.Character and getRoot(Players.LocalPlayer.Character) and Players.LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
 							local pos = math.floor((getRoot(Players.LocalPlayer.Character).Position - getRoot(plr.Character).Position).magnitude)
-							TextLabel.Text = ESPCFG.text(plr, round(plr.Character:FindFirstChildOfClass('Humanoid').Health, 1), pos)
+							TextLabel.Text = 'Name: '..plr.Name..' | Health: '..round(plr.Character:FindFirstChildOfClass('Humanoid').Health, 1)..' | Studs: '..pos
 						end
 					else
 						teamChange:Disconnect()
@@ -14109,8 +14043,37 @@ end
 end
 
 
--- ─── TERMINAL (pl5.0): comando "espcfg" (config do ESP do IY) ───
+-- ─── ESP novo (pl5.0): comando "esp" ─────────
+-- Substitui o uso do ESP do IY no terminal (o do IY continua acessível via `iy esp`).
+-- Highlight (preenchimento + contorno atravessando paredes) + etiqueta com nome/vida/distância.
 do
+    local Players     = game:GetService("Players")
+    local RunService  = game:GetService("RunService")
+    local LocalPlayer = Players.LocalPlayer
+
+    -- limpa instância anterior (reexecução do script)
+    if IY_ENV.PLESP_CLEANUP then pcall(IY_ENV.PLESP_CLEANUP) end
+
+    local cfg = {
+        enabled      = false,
+        color        = nil,      -- Color3 global (nil = cor do time)
+        teamColors   = {},       -- ["time minusculo"] = Color3
+        filter       = "all",    -- all | enemy | ally | list
+        teams        = {},       -- ["time minusculo"] = true (filter = list)
+        mode         = "team",   -- team = cor do time | ally = verde aliado / vermelho inimigo
+        showName     = true,
+        showHealth   = true,
+        showDistance = true,
+        fill         = 0.6,
+        outline      = 0,
+        maxDistance  = math.huge,
+        textSize     = 14,
+    }
+    IY_ENV.PLESP = cfg
+
+    local entries = {}
+    local holder, loopConn, addConn, remConn
+
     local NAMED = {
         red = Color3.fromRGB(255, 0, 0), green = Color3.fromRGB(0, 255, 0), blue = Color3.fromRGB(0, 120, 255),
         yellow = Color3.fromRGB(255, 255, 0), white = Color3.fromRGB(255, 255, 255), black = Color3.fromRGB(0, 0, 0),
@@ -14118,17 +14081,11 @@ do
         cyan = Color3.fromRGB(0, 255, 255),
     }
     local function tp(t, c) if PLX.print then PLX.print(t, c and PLX.COL and PLX.COL[c] or nil) end end
-    local function CFG()
-        return (type(ESPCFG) == "table" and ESPCFG) or IY_ENV.ESPCFG
-    end
-    local function espOn()
-        return (type(ESPenabled) == "boolean" and ESPenabled) or IY_ENV.ESPenabled == true
-    end
-    local function colorStr(c)
+    local function fmtColor(c)
         if not c then return "time (original)" end
         return string.format("%d,%d,%d", math.floor(c.R * 255 + 0.5), math.floor(c.G * 255 + 0.5), math.floor(c.B * 255 + 0.5))
     end
-    -- lê a cor no FIM dos tokens: "r g b", "#hex" ou nome. Retorna cor, qtdTokens
+    -- cor no FIM dos tokens: "r g b", "#hex" ou nome. Retorna cor, qtdTokens
     local function parseColor(tokens)
         local n = #tokens
         if n >= 3 then
@@ -14145,40 +14102,192 @@ do
         if NAMED[last] then return NAMED[last], 1 end
         return nil, 0
     end
-    local function applyLive()
-        local cfg = CFG()
-        if cfg and type(cfg.apply) == "function" then cfg.apply() end
-    end
-    local function refresh()
-        if not espOn() then return end
-        local cfg = CFG()
-        IY_EXEC_CMD("noesp", LP, true)
-        task.wait(0.2)
-        IY_EXEC_CMD((cfg and cfg.logic == true) and "espteam" or "esp", LP, true)
+
+    local function getHolder()
+        if holder and holder.Parent then return holder end
+        holder = Instance.new("Folder")
+        holder.Name = "PL_ESP"
+        local candidates = {}
+        if type(gethui) == "function" then
+            local ok, h = pcall(gethui)
+            if ok and h then table.insert(candidates, h) end
+        end
+        local okc, cg = pcall(game.GetService, game, "CoreGui")
+        if okc and cg then table.insert(candidates, cg) end
+        table.insert(candidates, LocalPlayer:FindFirstChildOfClass("PlayerGui"))
+        for _, par in ipairs(candidates) do
+            local ok = pcall(function() holder.Parent = par end)
+            if ok and holder.Parent == par then break end
+        end
+        return holder
     end
 
-    PLX.espcfg = function(args)
-        local cfg = CFG()
-        if not cfg then return false, "ESPCFG indisponivel (reexecute o script com o IY nao carregado)" end
-        if type(IY_EXEC_CMD) ~= "function" then return false, "motor do IY indisponivel" end
+    local function allowed(plr)
+        local f = cfg.filter
+        if f == "all" then return true end
+        if f == "enemy" then return plr.Team ~= LocalPlayer.Team end
+        if f == "ally" then return plr.Team == LocalPlayer.Team end
+        if f == "list" then return plr.Team ~= nil and cfg.teams[plr.Team.Name:lower()] == true end
+        return true
+    end
+
+    local function colorFor(plr)
+        local t = plr.Team
+        if t and cfg.teamColors[t.Name:lower()] then return cfg.teamColors[t.Name:lower()] end
+        if cfg.color then return cfg.color end
+        if cfg.mode == "ally" then
+            return (plr.Team == LocalPlayer.Team) and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 0, 0)
+        end
+        return plr.TeamColor.Color
+    end
+
+    local function destroyVisual(e)
+        if e.hl then e.hl:Destroy(); e.hl = nil end
+        if e.bb then e.bb:Destroy(); e.bb = nil end
+        e.label = nil
+        e.char = nil
+    end
+
+    local function attach(e, char)
+        e.token = e.token + 1
+        destroyVisual(e)
+        if not char then return end
+        local token = e.token
+        e.char = char
+        local hl = Instance.new("Highlight")
+        hl.Name = e.plr.Name
+        hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        hl.Adornee = char
+        hl.Enabled = false
+        hl.Parent = getHolder()
+        e.hl = hl
+        task.spawn(function()
+            local head = char:WaitForChild("Head", 5)
+            if e.token ~= token or not head then return end
+            local bb = Instance.new("BillboardGui")
+            bb.Name = e.plr.Name
+            bb.Adornee = head
+            bb.AlwaysOnTop = true
+            bb.Size = UDim2.new(0, 220, 0, 24)
+            bb.StudsOffset = Vector3.new(0, 2.6, 0)
+            bb.MaxDistance = math.huge
+            bb.Enabled = false
+            local lbl = Instance.new("TextLabel")
+            lbl.BackgroundTransparency = 1
+            lbl.Size = UDim2.new(1, 0, 1, 0)
+            lbl.Font = Enum.Font.SourceSansSemibold
+            lbl.TextSize = cfg.textSize
+            lbl.TextColor3 = Color3.new(1, 1, 1)
+            lbl.TextStrokeTransparency = 0
+            lbl.Text = ""
+            lbl.Parent = bb
+            bb.Parent = getHolder()
+            e.bb, e.label = bb, lbl
+        end)
+    end
+
+    local function track(plr)
+        if plr == LocalPlayer or entries[plr] then return end
+        local e = {plr = plr, token = 0, conns = {}}
+        entries[plr] = e
+        table.insert(e.conns, plr.CharacterAdded:Connect(function(c) attach(e, c) end))
+        table.insert(e.conns, plr.CharacterRemoving:Connect(function() attach(e, nil) end))
+        if plr.Character then attach(e, plr.Character) end
+    end
+
+    local function untrack(plr)
+        local e = entries[plr]
+        if not e then return end
+        for _, c in ipairs(e.conns) do c:Disconnect() end
+        e.token = e.token + 1
+        destroyVisual(e)
+        entries[plr] = nil
+    end
+
+    local function step()
+        local myChar = LocalPlayer.Character
+        local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+        for plr, e in pairs(entries) do
+            local char = e.char
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            local dist = (myRoot and root) and math.floor((myRoot.Position - root.Position).Magnitude) or nil
+            local visible = char ~= nil and hum ~= nil and hum.Health > 0 and allowed(plr)
+                and (dist == nil or dist <= cfg.maxDistance)
+            local c = visible and colorFor(plr) or nil
+            if e.hl then
+                e.hl.Enabled = visible
+                if visible then
+                    e.hl.FillColor, e.hl.OutlineColor = c, c
+                    e.hl.FillTransparency, e.hl.OutlineTransparency = cfg.fill, cfg.outline
+                end
+            end
+            if e.bb and e.label then
+                local parts = {}
+                if cfg.showName then parts[#parts + 1] = plr.Name end
+                if cfg.showHealth and hum then parts[#parts + 1] = math.floor(hum.Health + 0.5) .. " HP" end
+                if cfg.showDistance and dist then parts[#parts + 1] = dist .. " studs" end
+                local text = table.concat(parts, " | ")
+                local show = visible and text ~= ""
+                e.bb.Enabled = show
+                if show then
+                    e.label.Text = text
+                    e.label.TextColor3 = c
+                    e.label.TextSize = cfg.textSize
+                end
+            end
+        end
+    end
+
+    local function enable()
+        if cfg.enabled then return end
+        cfg.enabled = true
+        getHolder()
+        for _, plr in ipairs(Players:GetPlayers()) do track(plr) end
+        addConn = Players.PlayerAdded:Connect(track)
+        remConn = Players.PlayerRemoving:Connect(untrack)
+        loopConn = RunService.RenderStepped:Connect(function() pcall(step) end)
+    end
+
+    local function disable()
+        cfg.enabled = false
+        if loopConn then loopConn:Disconnect(); loopConn = nil end
+        if addConn then addConn:Disconnect(); addConn = nil end
+        if remConn then remConn:Disconnect(); remConn = nil end
+        for plr in pairs(entries) do untrack(plr) end
+        if holder then holder:Destroy(); holder = nil end
+    end
+    IY_ENV.PLESP_CLEANUP = disable
+
+    local function onoff(v)
+        v = (v or ""):lower()
+        if v == "on" then return true end
+        if v == "off" then return false end
+        return nil
+    end
+
+    PLX.esp = function(args)
         local sub = (args[1] or "help"):lower()
 
         if sub == "help" then
-            tp("espcfg on|off                    liga/desliga ESP", "info")
-            tp("espcfg color <cor|reset>         cor de todos (nome, #hex ou r g b)", "info")
-            tp("espcfg color team <time> <cor|reset>   cor por time", "info")
-            tp("espcfg team <all|enemy|ally|t1,t2>     quais times aparecem", "info")
-            tp("espcfg name on|off               mostra/oculta o nome", "info")
-            tp("espcfg mode team|default         team = verde aliado/vermelho inimigo", "info")
-            tp("espcfg status", "info")
+            tp("esp on|off                      liga/desliga", "info")
+            tp("esp color <cor|reset>           cor de todos (nome, #hex ou r g b)", "info")
+            tp("esp color team <time> <cor|reset>   cor por time", "info")
+            tp("esp team <all|enemy|ally|t1,t2> quais times aparecem", "info")
+            tp("esp name|health|dist on|off     mostra/oculta cada info", "info")
+            tp("esp mode team|ally              cor do time | verde aliado/vermelho inimigo", "info")
+            tp("esp fill <0-1> | outline <0-1>  transparencia (1 = invisivel)", "info")
+            tp("esp maxdist <studs|inf>         distancia maxima", "info")
+            tp("esp size <n>                    tamanho do texto", "info")
+            tp("esp status", "info")
             tp("cores: red green blue yellow white black orange purple pink cyan", "muted")
-            return true, "espcfg help"
+            return true, "esp help"
         end
 
         if sub == "status" then
-            tp("ESP: " .. (espOn() and "ON" or "OFF"), espOn() and "ok" or "muted")
-            tp("cor global: " .. colorStr(cfg.color), "info")
-            for t, c in pairs(cfg.teamColors) do tp("  cor time '" .. t .. "': " .. colorStr(c), "info") end
+            tp("ESP: " .. (cfg.enabled and "ON" or "OFF"), cfg.enabled and "ok" or "muted")
+            tp("cor global: " .. fmtColor(cfg.color) .. " | modo: " .. cfg.mode, "info")
+            for t, c in pairs(cfg.teamColors) do tp("  cor time '" .. t .. "': " .. fmtColor(c), "info") end
             local f = cfg.filter
             if f == "list" then
                 local l = {}
@@ -14186,38 +14295,63 @@ do
                 f = "list (" .. table.concat(l, ", ") .. ")"
             end
             tp("times: " .. f, "info")
-            tp("nome: " .. (cfg.showName and "ON" or "OFF"), "info")
-            tp("modo: " .. (cfg.logic == true and "team (verde/vermelho)" or "default"), "info")
+            tp(string.format("nome=%s vida=%s dist=%s | fill=%s outline=%s maxdist=%s size=%s",
+                cfg.showName and "on" or "off", cfg.showHealth and "on" or "off", cfg.showDistance and "on" or "off",
+                tostring(cfg.fill), tostring(cfg.outline), tostring(cfg.maxDistance), tostring(cfg.textSize)), "info")
             return true, "status"
         end
 
         if sub == "on" then
-            IY_EXEC_CMD((cfg.logic == true) and "espteam" or "esp", LP, true)
+            if type(IY_EXEC_CMD) == "function" then pcall(IY_EXEC_CMD, "noesp", LP, true) end
+            enable()
             return true, "ESP ligado"
         end
         if sub == "off" then
-            IY_EXEC_CMD("noesp", LP, true)
+            disable()
             return true, "ESP desligado"
         end
 
-        if sub == "name" then
-            local v = (args[2] or ""):lower()
-            if v ~= "on" and v ~= "off" then return false, "uso: espcfg name on|off" end
-            cfg.showName = (v == "on")
-            return true, "nome " .. v
+        local flags = {name = "showName", health = "showHealth", dist = "showDistance"}
+        if flags[sub] then
+            local v = onoff(args[2])
+            if v == nil then return false, "uso: esp " .. sub .. " on|off" end
+            cfg[flags[sub]] = v
+            return true, sub .. (v and " on" or " off")
         end
 
         if sub == "mode" then
             local v = (args[2] or ""):lower()
-            if v ~= "team" and v ~= "default" then return false, "uso: espcfg mode team|default" end
-            cfg.logic = (v == "team") or nil
-            task.spawn(refresh)
+            if v ~= "team" and v ~= "ally" then return false, "uso: esp mode team|ally" end
+            cfg.mode = v
             return true, "modo " .. v
+        end
+
+        if sub == "fill" or sub == "outline" then
+            local n = tonumber(args[2])
+            if not n then return false, "uso: esp " .. sub .. " <0-1>" end
+            cfg[sub] = math.clamp(n, 0, 1)
+            return true, sub .. " = " .. cfg[sub]
+        end
+
+        if sub == "maxdist" then
+            local a = (args[2] or ""):lower()
+            if a == "inf" then cfg.maxDistance = math.huge; return true, "maxdist = inf" end
+            local n = tonumber(a)
+            if not n or n <= 0 then return false, "uso: esp maxdist <studs|inf>" end
+            cfg.maxDistance = n
+            return true, "maxdist = " .. n
+        end
+
+        if sub == "size" then
+            local n = tonumber(args[2])
+            if not n then return false, "uso: esp size <n>" end
+            cfg.textSize = math.clamp(math.floor(n), 8, 48)
+            return true, "size = " .. cfg.textSize
         end
 
         if sub == "team" then
             local rest = table.concat(args, " ", 2):lower()
-            if rest == "" then return false, "uso: espcfg team <all|enemy|ally|t1,t2>" end
+            if rest == "" then return false, "uso: esp team <all|enemy|ally|t1,t2>" end
             if rest == "all" or rest == "enemy" or rest == "ally" then
                 cfg.filter = rest
                 cfg.teams = {}
@@ -14231,20 +14365,19 @@ do
                 cfg.filter = "list"
                 cfg.teams = set
             end
-            task.spawn(applyLive)
             return true, "times: " .. cfg.filter
         end
 
         if sub == "color" or sub == "cor" then
             local tokens = {table.unpack(args, 2)}
-            if #tokens == 0 then return false, "uso: espcfg color <cor|reset>" end
-            if tokens[1]:lower() == "team" or tokens[1]:lower() == "time" then
+            if #tokens == 0 then return false, "uso: esp color <cor|reset>" end
+            local first = tokens[1]:lower()
+            if first == "team" or first == "time" then
                 local rest = {table.unpack(tokens, 2)}
-                if #rest < 2 then return false, "uso: espcfg color team <time> <cor|reset>" end
+                if #rest < 2 then return false, "uso: esp color team <time> <cor|reset>" end
                 if rest[#rest]:lower() == "reset" then
                     local name = table.concat(rest, " ", 1, #rest - 1):lower()
                     cfg.teamColors[name] = nil
-                    task.spawn(applyLive)
                     return true, "cor do time '" .. name .. "' resetada"
                 end
                 local c, used = parseColor(rest)
@@ -14252,23 +14385,20 @@ do
                 if #rest - used < 1 then return false, "informe o nome do time" end
                 local name = table.concat(rest, " ", 1, #rest - used):lower()
                 cfg.teamColors[name] = c
-                task.spawn(applyLive)
-                return true, "time '" .. name .. "' -> " .. colorStr(c)
+                return true, "time '" .. name .. "' -> " .. fmtColor(c)
             end
-            if tokens[1]:lower() == "reset" then
+            if first == "reset" then
                 cfg.color = nil
                 cfg.teamColors = {}
-                task.spawn(applyLive)
                 return true, "cores resetadas (cor do time)"
             end
             local c = parseColor(tokens)
             if not c then return false, "cor invalida (nome, #hex ou r g b)" end
             cfg.color = c
-            task.spawn(applyLive)
-            return true, "cor " .. colorStr(c)
+            return true, "cor " .. fmtColor(c)
         end
 
-        return false, "subcomando invalido (use: espcfg help)"
+        return false, "subcomando invalido (use: esp help)"
     end
 end
 
@@ -14278,7 +14408,7 @@ local CMDS = {
     {cmd = "help", desc = "Mostrar ajuda", usage = "help [comando]", fn = nil},
     {cmd = "gun", desc = "Gun Patcher (gun help)", usage = "gun <status|mode|on|off|set|delay|apply|restore|help>", fn = function(args) return PLX.gun(args) end},
     {cmd = "escape", desc = "Auto Escape manual (so Inmates)", usage = "escape [stop|status]", fn = function(args) return PLX.escape(args) end},
-    {cmd = "espcfg", desc = "Config do ESP do IY (espcfg help)", usage = "espcfg <on|off|color|team|name|mode|status|help>", fn = function(args) return PLX.espcfg(args) end},
+    {cmd = "esp", desc = "ESP novo (esp help)", usage = "esp <on|off|color|team|name|health|dist|mode|fill|outline|maxdist|size|status|help>", fn = function(args) return PLX.esp(args) end},
 }
 
 local CMD_MAP = {}
