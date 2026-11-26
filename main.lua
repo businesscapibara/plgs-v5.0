@@ -14385,6 +14385,148 @@ do
     end
 end
 
+-- ===================== SILENT AIM (config) =====================
+do
+    local Players = game:GetService("Players")
+    local RunService = game:GetService("RunService")
+    local UserInputService = game:GetService("UserInputService")
+    local LocalPlayer = Players.LocalPlayer
+
+    local cfg = {
+        enabled = false,
+        fov = 100,
+        hitPart = "Head",
+        teamCheck = true,
+        showFov = true,
+    }
+    IY_ENV.PLSILENT = cfg
+
+    local function LPH_NO_UPVALUES(Function)
+        return function(...) return Function(...) end
+    end
+
+    local fov_circle = Drawing.new("Circle")
+    fov_circle.Visible = false
+    fov_circle.Color = Color3.fromRGB(255,255,255)
+    fov_circle.Radius = cfg.fov
+    fov_circle.Transparency = 1
+    fov_circle.Filled = false
+    fov_circle.NumSides = 64
+
+    RunService.PreRender:Connect(function()
+        fov_circle.Position = UserInputService:GetMouseLocation()
+        fov_circle.Radius = cfg.fov
+        fov_circle.Visible = cfg.enabled and cfg.showFov
+    end)
+
+    local function get_closest_player(part_name, fov)
+        fov = fov or math.huge
+        local closest_player, closest_position, closest_distance = nil, nil, fov
+        for _, player in Players:GetPlayers() do
+            if player == LocalPlayer then continue end
+            if cfg.teamCheck and player.Team == LocalPlayer.Team then continue end
+            local character = player.Character
+            if not character then continue end
+            local part = character:FindFirstChild(part_name)
+            if not part then continue end
+            local screen_position = workspace.CurrentCamera:WorldToViewportPoint(part.Position)
+            if screen_position.Z <= 0 then continue end
+            local screen_center = UserInputService:GetMouseLocation()
+            local screen_distance = (Vector2.new(screen_position.X, screen_position.Y) - screen_center).Magnitude
+            if screen_distance < closest_distance then
+                closest_player, closest_position, closest_distance = player, part.Position, screen_distance
+            end
+        end
+        return closest_player, closest_position
+    end
+
+    -- nuu, esse hook é preso ao castRay EXATO do seu build atual~ se o jogo atualizar
+    -- e isso parar de funcionar: filtergc de novo por uma função com upvalues de
+    -- hit-detection, confirma o nome no console, e troca a string "castRay" abaixo. :3
+    local castRay, oldCastRay
+
+    local function enableSilent()
+        if cfg.enabled then return end
+        local ok, fn = pcall(function()
+            return filtergc("function", {Name = "castRay"}, true)
+        end)
+        if not ok or not fn then
+            cfg.enabled = false
+            if PLX.print then PLX.print("[silent] castRay nao encontrado neste build/executor", PLX.COL.err) end
+            return
+        end
+        castRay = fn
+        oldCastRay = hookfunction(castRay, LPH_NO_UPVALUES(function(...)
+            local closest_player, closest_position = get_closest_player(cfg.hitPart, cfg.fov)
+            if closest_player and closest_position and closest_player.Character then
+                local part = closest_player.Character:FindFirstChild(cfg.hitPart)
+                if part then return part, closest_position end
+            end
+            return oldCastRay(...)
+        end))
+        cfg.enabled = true
+    end
+
+    local function disableSilent()
+        cfg.enabled = false
+        if oldCastRay and castRay then
+            pcall(function() hookfunction(castRay, oldCastRay) end)
+        end
+    end
+
+    PLX.silent = function(args)
+        local sub = (args[1] or "help"):lower()
+        if sub == "help" then
+            if PLX.print then
+                PLX.print("silent on|off          liga/desliga", PLX.COL.info)
+                PLX.print("silent fov <n>         raio do FOV", PLX.COL.info)
+                PLX.print("silent part <nome>     parte alvo (Head, Torso, HumanoidRootPart...)", PLX.COL.info)
+                PLX.print("silent team on|off     ignora/ataca o proprio time", PLX.COL.info)
+                PLX.print("silent circle on|off   mostra/oculta circulo de FOV", PLX.COL.info)
+                PLX.print("silent status", PLX.COL.info)
+            end
+            return true, "silent help"
+        end
+        if sub == "on" then
+            enableSilent()
+            return cfg.enabled, cfg.enabled and "silent aim ligado" or "falhou ao achar castRay"
+        end
+        if sub == "off" then disableSilent(); return true, "silent aim desligado" end
+        if sub == "fov" then
+            local n = tonumber(args[2])
+            if not n then return false, "uso: silent fov <n>" end
+            cfg.fov = n
+            return true, "fov = " .. n
+        end
+        if sub == "part" then
+            if not args[2] then return false, "uso: silent part <nome>" end
+            cfg.hitPart = args[2]
+            return true, "hit part = " .. cfg.hitPart
+        end
+        if sub == "team" then
+            local v = (args[2] or ""):lower()
+            if v ~= "on" and v ~= "off" then return false, "uso: silent team on|off" end
+            cfg.teamCheck = (v == "on")
+            return true, "team check " .. v
+        end
+        if sub == "circle" then
+            local v = (args[2] or ""):lower()
+            if v ~= "on" and v ~= "off" then return false, "uso: silent circle on|off" end
+            cfg.showFov = (v == "on")
+            return true, "circulo " .. v
+        end
+        if sub == "status" then
+            if PLX.print then
+                PLX.print(string.format("silent: %s | fov=%d | part=%s | team=%s | circle=%s",
+                    cfg.enabled and "ON" or "OFF", cfg.fov, cfg.hitPart,
+                    cfg.teamCheck and "on" or "off", cfg.showFov and "on" or "off"), PLX.COL.info)
+            end
+            return true, "status"
+        end
+        return false, "subcomando invalido (use: silent help)"
+    end
+end
+				
 local CMDS = {
     {cmd = "clear", desc = "Limpar o terminal", usage = "clear", fn = nil},
     {cmd = "ui", desc = "Alternar modo de botões", usage = "ui [off]", fn = nil},
