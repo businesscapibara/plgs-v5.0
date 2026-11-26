@@ -14534,6 +14534,7 @@ local CMDS = {
     {cmd = "gun", desc = "Gun Patcher (gun help)", usage = "gun <status|mode|on|off|set|delay|apply|restore|help>", fn = function(args) return PLX.gun(args) end},
     {cmd = "escape", desc = "Auto Escape manual (so Inmates)", usage = "escape [stop|status]", fn = function(args) return PLX.escape(args) end},
     {cmd = "esp", desc = "ESP novo (esp help)", usage = "esp <on|off|color|team|name|health|dist|mode|fill|outline|maxdist|size|status|help>", fn = function(args) return PLX.esp(args) end},
+	{cmd = "silent", desc = "Silent Aim (silent help)", usage = "silent <on|off|fov|part|team|circle|status|help>", fn = function(args) return PLX.silent(args) end}
 }
 
 local CMD_MAP = {}
