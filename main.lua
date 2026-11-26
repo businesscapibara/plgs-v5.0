@@ -1,5 +1,5 @@
 --[=[
-INFINITE YIELD 6.4.2 + TERMINAL
+PLGS 5.1
 
 Base: Infinite Yield 6.4.2 completo com um terminal simples de comandos.
 - Infinite Yield 6.4.2 completo, com a GUI principal própria desativada.
