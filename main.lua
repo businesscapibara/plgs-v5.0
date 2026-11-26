@@ -5769,6 +5769,37 @@ function ESPCFG.text(plr, health, studs)
 	if studs ~= nil then parts[#parts + 1] = 'Studs: '..studs end
 	return table.concat(parts, ' | ')
 end
+-- apply: atualiza o ESP ja existente (cor / filtro de times) sem derrubar tudo.
+-- O nome e lido a cada frame pelo loop do ESP (ESPCFG.text), entao nao precisa de refresh.
+function ESPCFG.apply()
+	if not ESPenabled then return end
+	local lp = Players.LocalPlayer
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= lp then
+			local folder = COREGUI:FindFirstChild(plr.Name..'_ESP')
+			if ESPCFG.allow(plr) then
+				if folder then
+					local cc = ESPCFG.colorFor(plr)
+					for _, d in ipairs(folder:GetChildren()) do
+						if d:IsA("BoxHandleAdornment") then
+							if cc then
+								d.Color3 = cc
+							elseif ESPCFG.logic == true then
+								d.Color = BrickColor.new(plr.TeamColor == lp.TeamColor and "Bright green" or "Bright red")
+							else
+								d.Color = plr.TeamColor
+							end
+						end
+					end
+				else
+					ESP(plr, ESPCFG.logic)
+				end
+			elseif folder then
+				folder:Destroy()
+			end
+		end
+	end
+end
 pcall(function() getgenv().ESPCFG = ESPCFG end)
 
 function round(num, numDecimalPlaces)
@@ -14114,6 +14145,10 @@ do
         if NAMED[last] then return NAMED[last], 1 end
         return nil, 0
     end
+    local function applyLive()
+        local cfg = CFG()
+        if cfg and type(cfg.apply) == "function" then cfg.apply() end
+    end
     local function refresh()
         if not espOn() then return end
         local cfg = CFG()
@@ -14169,7 +14204,6 @@ do
             local v = (args[2] or ""):lower()
             if v ~= "on" and v ~= "off" then return false, "uso: espcfg name on|off" end
             cfg.showName = (v == "on")
-            task.spawn(refresh)
             return true, "nome " .. v
         end
 
@@ -14197,7 +14231,7 @@ do
                 cfg.filter = "list"
                 cfg.teams = set
             end
-            task.spawn(refresh)
+            task.spawn(applyLive)
             return true, "times: " .. cfg.filter
         end
 
@@ -14210,7 +14244,7 @@ do
                 if rest[#rest]:lower() == "reset" then
                     local name = table.concat(rest, " ", 1, #rest - 1):lower()
                     cfg.teamColors[name] = nil
-                    task.spawn(refresh)
+                    task.spawn(applyLive)
                     return true, "cor do time '" .. name .. "' resetada"
                 end
                 local c, used = parseColor(rest)
@@ -14218,19 +14252,19 @@ do
                 if #rest - used < 1 then return false, "informe o nome do time" end
                 local name = table.concat(rest, " ", 1, #rest - used):lower()
                 cfg.teamColors[name] = c
-                task.spawn(refresh)
+                task.spawn(applyLive)
                 return true, "time '" .. name .. "' -> " .. colorStr(c)
             end
             if tokens[1]:lower() == "reset" then
                 cfg.color = nil
                 cfg.teamColors = {}
-                task.spawn(refresh)
+                task.spawn(applyLive)
                 return true, "cores resetadas (cor do time)"
             end
             local c = parseColor(tokens)
             if not c then return false, "cor invalida (nome, #hex ou r g b)" end
             cfg.color = c
-            task.spawn(refresh)
+            task.spawn(applyLive)
             return true, "cor " .. colorStr(c)
         end
 
