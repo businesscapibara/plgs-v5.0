@@ -14504,9 +14504,12 @@ btnPanel.ScrollBarImageColor3 = Color3.fromRGB(0,160,50)
 btnPanel.CanvasSize = UDim2.new(0,0,0,0)
 btnPanel.AutomaticCanvasSize = Enum.AutomaticSize.Y
 btnPanel.Visible = false
-local btnLayout = Instance.new("UIListLayout", btnPanel)
-btnLayout.Padding = UDim.new(0,3)
+local btnLayout = Instance.new("UIGridLayout", btnPanel)
+btnLayout.CellSize = UDim2.new(0, 108, 0, 30)
+btnLayout.CellPadding = UDim2.new(0, 5, 0, 5)
+btnLayout.SortOrder = Enum.SortOrder.LayoutOrder
 Instance.new("UIPadding", btnPanel).PaddingTop = UDim.new(0,4)
+Instance.new("UIPadding", btnPanel).PaddingLeft = UDim.new(0,4)
 
 -- linha de input
 local inputBg = Instance.new("Frame", win)
@@ -14569,30 +14572,51 @@ local function hideSuggestions()
 end
 
 local function updateSuggestions()
-    local raw = inputBox.Text or ""
-    local prefix = raw:match("^%s*[iI][yY]%s+(.+)$")
-    if not prefix then hideSuggestions(); return end
-    prefix = prefix:match("^%s*(.-)%s*$")
-    if prefix == "" then hideSuggestions(); return end
+    local raw = (inputBox.Text or ""):match("^%s*(.-)%s*$")
+    if raw == "" then hideSuggestions(); return end
+
+    -- Accept both "fly" and the legacy "iy fly" form.
+    local prefix = raw:match("^[iI][yY]%s+(.+)$") or raw
+    local typedToken = prefix:match("^(%S*)") or ""
+    if typedToken == "" then hideSuggestions(); return end
 
     local matches, seen = {}, {}
+    local function addMatch(name, kind)
+        local key = name:lower()
+        if key:sub(1, #typedToken) == typedToken:lower() and not seen[key] then
+            seen[key] = true
+            table.insert(matches, {name = name, kind = kind})
+        end
+    end
+
+    for _, entry in ipairs(CMDS) do
+        addMatch(entry.cmd, "terminal")
+    end
     if type(IY_COMMANDS) == "table" then
         for _, entry in pairs(IY_COMMANDS) do
-            local name = type(entry) == "table" and entry.NAME
-            if type(name) == "string" and name:lower():sub(1, #prefix) == prefix:lower() and not seen[name:lower()] then
-                seen[name:lower()] = true
-                table.insert(matches, {name = name, entry = entry})
+            if type(entry) == "table" and type(entry.NAME) == "string" then
+                addMatch(entry.NAME, "iy")
+                if type(entry.ALIAS) == "table" then
+                    for _, alias in ipairs(entry.ALIAS) do
+                        if type(alias) == "string" then addMatch(alias, "iy") end
+                    end
+                end
             end
         end
     end
-    table.sort(matches, function(a,b) return a.name:lower() < b.name:lower() end)
+
+    table.sort(matches, function(a,b)
+        if a.kind ~= b.kind then return a.kind == "iy" end
+        return a.name:lower() < b.name:lower()
+    end)
     hideSuggestions()
     if #matches == 0 then return end
 
-    local shown = math.min(#matches, 7)
+    local shown = math.min(#matches, 6)
     suggestFrame.Size = UDim2.new(1, -112, 0, shown * 22 + 8)
     suggestFrame.Position = UDim2.new(0, 110, 1, -(32 + shown * 22 + 8))
     suggestFrame.Visible = true
+
     for i = 1, shown do
         local item = matches[i]
         local button = Instance.new("TextButton", suggestFrame)
@@ -14601,7 +14625,7 @@ local function updateSuggestions()
         button.BackgroundColor3 = Color3.fromRGB(13, 29, 15)
         button.BorderSizePixel = 0
         button.AutoButtonColor = true
-        button.Text = "  "..item.name
+        button.Text = (item.kind == "iy" and "  IY  " or "  PL  ")..item.name
         button.TextColor3 = Color3.fromRGB(170, 255, 180)
         button.Font = Enum.Font.Code
         button.TextSize = 11
@@ -14609,14 +14633,15 @@ local function updateSuggestions()
         button.ZIndex = 31
         Instance.new("UICorner", button).CornerRadius = UDim.new(0, 3)
         button.MouseButton1Click:Connect(function()
-            inputBox.Text = "iy "..item.name.." "
+            -- Complete only the command token, retaining any typed arguments.
+            local argsTail = prefix:sub(#typedToken + 1)
+            inputBox.Text = item.name .. (argsTail:match("^%s") and argsTail or (argsTail ~= "" and " "..argsTail or " "))
             hideSuggestions()
             inputBox:CaptureFocus()
             inputBox.CursorPosition = #inputBox.Text + 1
         end)
     end
 end
-
 inputBox:GetPropertyChangedSignal("Text"):Connect(updateSuggestions)
 
 -- ── output helpers ────────────────────────────────────────────
@@ -14658,53 +14683,104 @@ end
 -- ── modo botões ───────────────────────────────────────────────
 local uiMode = false
 
+-- Somente alternâncias físicas do personagem local.
+-- Cada botão executa a função imediatamente e mantém a cor do estado.
+local UI_TOGGLES = {
+    {label = "Noclip", on = "noclip", off = "unnoclip"},
+    {label = "Fly", on = "fly", off = "unfly"},
+    {label = "Float", on = "float", off = "unfloat"},
+    {label = "Swim", on = "swim", off = "unswim"},
+    {label = "Infinite Jump", on = "infjump", off = "uninfjump"},
+    {label = "Invisible", on = "invisible", off = "visible"},
+    {label = "No Rotate", on = "norotate", off = "unnorotate"},
+}
+local toggleStates = {}
+
+local function setToggleButtonVisual(button, enabled)
+    button:SetAttribute("Enabled", enabled)
+    button.BackgroundColor3 = enabled and Color3.fromRGB(0, 105, 45) or Color3.fromRGB(18, 27, 20)
+    button.TextColor3 = enabled and Color3.fromRGB(225, 255, 225) or Color3.fromRGB(155, 190, 160)
+    local stroke = button:FindFirstChildOfClass("UIStroke")
+    if stroke then stroke.Color = enabled and Color3.fromRGB(0, 230, 90) or Color3.fromRGB(0, 75, 30) end
+end
+
+local function executeIY(command)
+    if type(IY_EXEC_CMD) ~= "function" then
+        println("[IY] motor do Infinite Yield indisponível", COL.err)
+        return false
+    end
+    local ok, err = pcall(IY_EXEC_CMD, command, LP, true)
+    if not ok then
+        println("[IY] falha ao executar "..command..": "..tostring(err), COL.err)
+        return false
+    end
+    return true
+end
+
 local function buildBtnPanel()
-    for _, c in ipairs(btnPanel:GetChildren()) do
-        if not c:IsA("UIListLayout") and not c:IsA("UIPadding") then c:Destroy() end
+    for _, child in ipairs(btnPanel:GetChildren()) do
+        if not child:IsA("UIGridLayout") and not child:IsA("UIPadding") then child:Destroy() end
     end
-    local buttonEntries = {}
-    for _, entry in ipairs(CMDS) do
-        if entry.fn then table.insert(buttonEntries, {label = entry.usage, text = entry.cmd.." "}) end
-    end
-    if type(IY_COMMANDS) == "table" then
-        local names = {}
-        for _, entry in pairs(IY_COMMANDS) do
-            if type(entry) == "table" and type(entry.NAME) == "string" then table.insert(names, entry.NAME) end
-        end
-        table.sort(names, function(a,b) return a:lower() < b:lower() end)
-        for _, name in ipairs(names) do table.insert(buttonEntries, {label = "iy "..name, text = "iy "..name.." "}) end
-    end
-    for _, entry in ipairs(buttonEntries) do
+
+    for index, entry in ipairs(UI_TOGGLES) do
         local btn = Instance.new("TextButton", btnPanel)
-        btn.Size = UDim2.new(1,-4,0,22)
-        btn.BackgroundColor3 = Color3.fromRGB(14,28,14)
+        btn.Name = "Toggle_"..entry.label:gsub("%W", "")
+        btn.LayoutOrder = index
+        btn.Size = UDim2.fromOffset(108, 30)
+        btn.BackgroundColor3 = Color3.fromRGB(18, 27, 20)
         btn.BorderSizePixel = 0
-        btn.Text = "  $ "..entry.label
-        btn.TextColor3 = COL.info
-        btn.Font = Enum.Font.Code; btn.TextSize = 11
-        btn.TextXAlignment = Enum.TextXAlignment.Left
-        Instance.new("UICorner", btn).CornerRadius = UDim.new(0,4)
-        Instance.new("UIStroke", btn).Color = Color3.fromRGB(0,80,30)
-        btn.MouseEnter:Connect(function() btn.BackgroundColor3 = Color3.fromRGB(0,40,15) end)
-        btn.MouseLeave:Connect(function() btn.BackgroundColor3 = Color3.fromRGB(14,28,14) end)
+        btn.Text = entry.label
+        btn.TextColor3 = Color3.fromRGB(155, 190, 160)
+        btn.Font = Enum.Font.Code
+        btn.TextSize = 10
+        btn.TextTruncate = Enum.TextTruncate.AtEnd
+        btn.AutoButtonColor = false
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+        local stroke = Instance.new("UIStroke", btn)
+        stroke.Color = Color3.fromRGB(0, 75, 30)
+        stroke.Thickness = 1
+
+        local enabled = toggleStates[entry.on] == true
+        setToggleButtonVisual(btn, enabled)
+
         btn.MouseButton1Click:Connect(function()
-            inputBox.Text = entry.text
-            inputBox:CaptureFocus()
-            inputBox.CursorPosition = #inputBox.Text + 1
+            local nextState = not (toggleStates[entry.on] == true)
+            local command = nextState and entry.on or entry.off
+            if executeIY(command) then
+                toggleStates[entry.on] = nextState
+                setToggleButtonVisual(btn, nextState)
+                println("[ui] "..entry.label..(nextState and " ativado" or " desativado"), nextState and COL.ok or COL.muted)
+            end
         end)
     end
 end
-
 local function setUIMode(on)
     uiMode = on
     outScroll.Visible = not on
     btnPanel.Visible  = on
     if on then
         buildBtnPanel()
-        println("[ui] modo botões ativado — clique para preencher o input", COL.yellow)
+        println("[ui] painel de alternâncias — clique para ativar/desativar", COL.yellow)
     else
         println("[ui] modo terminal restaurado", COL.muted)
     end
+end
+
+local function syncToggleState(commandText)
+    local first = (commandText or ""):match("^%s*(%S+)")
+    if not first then return end
+    first = first:lower()
+    local pairsByCommand = {
+        noclip = {"noclip", true}, unnoclip = {"noclip", false},
+        fly = {"fly", true}, unfly = {"fly", false},
+        float = {"float", true}, unfloat = {"float", false},
+        swim = {"swim", true}, unswim = {"swim", false},
+        infjump = {"infjump", true}, uninfjump = {"infjump", false},
+        invisible = {"invisible", true}, visible = {"invisible", false},
+        norotate = {"norotate", true}, unnorotate = {"norotate", false},
+    }
+    local pair = pairsByCommand[first]
+    if pair then toggleStates[pair[1]] = pair[2] end
 end
 
 -- ── processar comando ─────────────────────────────────────────
@@ -14745,7 +14821,7 @@ local function run(raw)
                     println("Infinite Yield: "..iyEntry.NAME, COL.yellow)
                     local aliases = (type(iyEntry.ALIAS) == "table") and table.concat(iyEntry.ALIAS, ", ") or ""
                     if aliases ~= "" then println("aliases: "..aliases, COL.info) end
-                    println("uso: iy "..iyEntry.NAME.." [argumentos]", COL.info)
+                    println("uso: "..iyEntry.NAME.." [argumentos]", COL.info)
                 else
                     println("comando desconhecido: "..args[1], COL.err)
                 end
@@ -14769,7 +14845,7 @@ local function run(raw)
             for _, name in ipairs(iyNames) do println("  "..name, COL.white) end
             println("", COL.muted)
             println("  help <comando>  mostra detalhes", COL.muted)
-            println("  iy <comando>    executa um comando IY", COL.muted)
+            println("  <comando IY>    executa diretamente, sem prefixo iy", COL.muted)
             println("  ui / ui off     alterna o painel", COL.muted)
             println("  clear           limpa o terminal", COL.muted)
             if #iyNames == 0 then
@@ -14793,6 +14869,7 @@ local function run(raw)
             return
         end
         IY_EXEC_CMD(iyText, LP, true)
+        syncToggleState(iyText)
         println("[IY] comando enviado: " .. iyText, COL.ok)
         return
     end
@@ -14802,6 +14879,7 @@ local function run(raw)
         local iyMatch = (type(IY_FIND_CMD) == "function") and IY_FIND_CMD(cmd) or nil
         if iyMatch and type(IY_EXEC_CMD) == "function" then
             IY_EXEC_CMD(raw, LP, true)
+            syncToggleState(raw)
             println("[IY] comando enviado: " .. raw, COL.ok)
             return
         end
