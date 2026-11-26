@@ -1,5 +1,5 @@
 --[=[
-PLGS 5.1
+PLGS 5.2
 
 Base: Infinite Yield 6.4.2 completo com um terminal simples de comandos.
 - Infinite Yield 6.4.2 completo, com a GUI principal própria desativada.
@@ -13516,23 +13516,6 @@ local IY_EXEC_CMD = (type(execCmd) == "function" and execCmd) or IY_ENV.execCmd
 local PLX = {}
 
 do
---[[
-    Gun Patcher — Safe Edition + Double Tap
-    
-    ⚠️  LIMITES SEGUROS (nao ultrapasse para evitar anti-cheat):
-    ---------------------------------------------------------------
-    FireRate        → minimo 0.3  (padrao: 0.7)  | abaixo = flagged
-    SpreadRadius    → 0 e seguro  (padrao: 0.038) | ok sempre
-    Range           → maximo 600  (padrao: 350)   | acima = flagged
-    ReloadTime      → minimo 1.0  (padrao: 3.5)   | abaixo = flagged
-    AutoFire        → true e seguro               | ok sempre
-    ProjectileCount → nao mexa    (padrao: 5)     | qualquer mudanca = flagged
-    MaxAmmo         → nao mexa    (padrao: 6)     | acima = flagged
-    DoubleTap       → delay >= FireRate            | abaixo = segundo tiro ignorado
-    ---------------------------------------------------------------
-    
-    Unequip + re-equip a arma apos executar para aplicar.
-]]
 
 local Players          = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
@@ -14693,6 +14676,7 @@ local UI_TOGGLES = {
     {label = "Infinite Jump", on = "infjump", off = "uninfjump"},
     {label = "Invisible", on = "invisible", off = "visible"},
     {label = "No Rotate", on = "norotate", off = "unnorotate"},
+	{label = "TPTool", command = "tptool"}
 }
 local toggleStates = {}
 
@@ -14750,6 +14734,33 @@ local function buildBtnPanel()
                 toggleStates[entry.on] = nextState
                 setToggleButtonVisual(btn, nextState)
                 println("[ui] "..entry.label..(nextState and " ativado" or " desativado"), nextState and COL.ok or COL.muted)
+            end
+        end)
+    end
+
+    -- Botões de ação (one-shot)
+    local actionStart = #UI_TOGGLES + 1
+    for i, entry in ipairs(UI_ACTIONS) do
+        local btn = Instance.new("TextButton", btnPanel)
+        btn.Name = "Action_"..entry.label:gsub("%W", "")
+        btn.LayoutOrder = actionStart + i
+        btn.Size = UDim2.fromOffset(108, 30)
+        btn.BackgroundColor3 = Color3.fromRGB(10, 55, 90)
+        btn.BorderSizePixel = 0
+        btn.Text = entry.label
+        btn.TextColor3 = Color3.fromRGB(180, 220, 255)
+        btn.Font = Enum.Font.Code
+        btn.TextSize = 10
+        btn.TextTruncate = Enum.TextTruncate.AtEnd
+        btn.AutoButtonColor = true
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+        local stroke = Instance.new("UIStroke", btn)
+        stroke.Color = Color3.fromRGB(0, 100, 180)
+        stroke.Thickness = 1
+
+        btn.MouseButton1Click:Connect(function()
+            if executeIY(entry.command) then
+                println("[ui] "..entry.label.." adicionado", COL.info)
             end
         end)
     end
@@ -14924,8 +14935,8 @@ UIS.InputBegan:Connect(function(inp, gp)
 end)
 
 -- ── boot ─────────────────────────────────────────────────────
-println("Infinite Yield Command Terminal", COL.ok)
+println("PLGS v5.2", COL.ok)
 println("digite 'help' para ver os comandos", COL.muted)
 println("", COL.muted)
 inputBox:CaptureFocus()
-print("[IY_TERMINAL] carregado")
+print("[PLGS_v5.2] carregado")
