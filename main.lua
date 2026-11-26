@@ -6,6 +6,7 @@ Base: Infinite Yield 6.4.2 completo com um terminal simples de comandos.
 - Terminal simples para executar comandos IY: `iy <comando>` ou comando IY direto.
 - Botão X para minimizar e ícone para restaurar o terminal (asset 7008158106).
 - Removidos os comandos/remotes do Debug Terminal original e todo o código de aimbot.
+- Integrados: Gun Patcher (`gun`), Auto Escape manual (`escape`) e config do ESP (`espcfg`).
 Execução conforme seu ambiente: Command Bar no contexto Client durante Play.
 ]=]
 
@@ -5738,12 +5739,45 @@ end)
 ESPenabled = false
 CHMSenabled = false
 
+-- ESPCFG: configuração do ESP (controlada pelo terminal: espcfg ...). Padrões = comportamento original.
+ESPCFG = {
+	color = nil,          -- Color3 global (nil = cor do time, original)
+	teamColors = {},      -- ["nome do time minúsculo"] = Color3
+	filter = "all",       -- all | enemy | ally | list
+	teams = {},           -- ["nome do time minúsculo"] = true (filter = list)
+	showName = true,
+	logic = nil,
+}
+function ESPCFG.allow(plr)
+	local lp = Players.LocalPlayer
+	local f = ESPCFG.filter
+	if f == "all" then return true end
+	if f == "enemy" then return plr.Team ~= lp.Team end
+	if f == "ally" then return plr.Team == lp.Team end
+	if f == "list" then return plr.Team ~= nil and ESPCFG.teams[plr.Team.Name:lower()] == true end
+	return true
+end
+function ESPCFG.colorFor(plr)
+	local t = plr.Team
+	if t and ESPCFG.teamColors[t.Name:lower()] then return ESPCFG.teamColors[t.Name:lower()] end
+	return ESPCFG.color
+end
+function ESPCFG.text(plr, health, studs)
+	local parts = {}
+	if ESPCFG.showName then parts[#parts + 1] = 'Name: '..plr.Name end
+	if health ~= nil then parts[#parts + 1] = 'Health: '..health end
+	if studs ~= nil then parts[#parts + 1] = 'Studs: '..studs end
+	return table.concat(parts, ' | ')
+end
+pcall(function() getgenv().ESPCFG = ESPCFG end)
+
 function round(num, numDecimalPlaces)
 	local mult = 10^(numDecimalPlaces or 0)
 	return math.floor(num * mult + 0.5) / mult
 end
 
 function ESP(plr, logic)
+	ESPCFG.logic = logic
 	task.spawn(function()
 		for i,v in pairs(COREGUI:GetChildren()) do
 			if v.Name == plr.Name..'_ESP' then
@@ -5751,7 +5785,7 @@ function ESP(plr, logic)
 			end
 		end
 		wait()
-		if plr.Character and plr.Name ~= Players.LocalPlayer.Name and not COREGUI:FindFirstChild(plr.Name..'_ESP') then
+		if plr.Character and plr.Name ~= Players.LocalPlayer.Name and ESPCFG.allow(plr) and not COREGUI:FindFirstChild(plr.Name..'_ESP') then
 			local ESPholder = Instance.new("Folder")
 			ESPholder.Name = plr.Name..'_ESP'
 			ESPholder.Parent = COREGUI
@@ -5771,6 +5805,8 @@ function ESP(plr, logic)
 					else
 						a.Color = plr.TeamColor
 					end
+					local customColor = ESPCFG.colorFor(plr)
+					if customColor then a.Color3 = customColor end
 				end
 			end
 			if plr.Character and plr.Character:FindFirstChild('Head') then
@@ -5791,7 +5827,7 @@ function ESP(plr, logic)
 				TextLabel.TextColor3 = Color3.new(1, 1, 1)
 				TextLabel.TextStrokeTransparency = 0
 				TextLabel.TextYAlignment = Enum.TextYAlignment.Bottom
-				TextLabel.Text = 'Name: '..plr.Name
+				TextLabel.Text = ESPCFG.text(plr)
 				TextLabel.ZIndex = 10
 				local espLoopFunc
 				local teamChange
@@ -5825,7 +5861,7 @@ function ESP(plr, logic)
 					if COREGUI:FindFirstChild(plr.Name..'_ESP') then
 						if plr.Character and getRoot(plr.Character) and plr.Character:FindFirstChildOfClass("Humanoid") and Players.LocalPlayer.Character and getRoot(Players.LocalPlayer.Character) and Players.LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
 							local pos = math.floor((getRoot(Players.LocalPlayer.Character).Position - getRoot(plr.Character).Position).magnitude)
-							TextLabel.Text = 'Name: '..plr.Name..' | Health: '..round(plr.Character:FindFirstChildOfClass('Humanoid').Health, 1)..' | Studs: '..pos
+							TextLabel.Text = ESPCFG.text(plr, round(plr.Character:FindFirstChildOfClass('Humanoid').Health, 1), pos)
 						end
 					else
 						teamChange:Disconnect()
@@ -13510,10 +13546,705 @@ local IY_COMMANDS = (type(cmds) == "table" and cmds) or IY_ENV.cmds or {}
 local IY_FIND_CMD = (type(findCmd) == "function" and findCmd) or IY_ENV.findCmd
 local IY_EXEC_CMD = (type(execCmd) == "function" and execCmd) or IY_ENV.execCmd
 
+-- ===================== MÓDULOS INTEGRADOS (Gun Patcher / Auto Escape) =====================
+-- PLX: ponte entre os módulos e o terminal (PLX.print/PLX.COL ligados após criar o println).
+local PLX = {}
+
+do
+--[[
+    Gun Patcher — Safe Edition + Double Tap
+    
+    ⚠️  LIMITES SEGUROS (nao ultrapasse para evitar anti-cheat):
+    ---------------------------------------------------------------
+    FireRate        → minimo 0.3  (padrao: 0.7)  | abaixo = flagged
+    SpreadRadius    → 0 e seguro  (padrao: 0.038) | ok sempre
+    Range           → maximo 600  (padrao: 350)   | acima = flagged
+    ReloadTime      → minimo 1.0  (padrao: 3.5)   | abaixo = flagged
+    AutoFire        → true e seguro               | ok sempre
+    ProjectileCount → nao mexa    (padrao: 5)     | qualquer mudanca = flagged
+    MaxAmmo         → nao mexa    (padrao: 6)     | acima = flagged
+    DoubleTap       → delay >= FireRate            | abaixo = segundo tiro ignorado
+    ---------------------------------------------------------------
+    
+    Unequip + re-equip a arma apos executar para aplicar.
+]]
+
+local Players          = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer      = Players.LocalPlayer
+
+-- ─── MODO ────────────────────────────────────
+local SAFE_MODE = false   -- true = seguro | false = rage
+
+-- ─── PATCHES ─────────────────────────────────
+local PATCHES = {
+    SpreadRadius = {
+        enabled = true,
+        safe    = 0,
+        rage    = 0,
+        limit   = "Sempre seguro. Pode deixar 0.",
+    },
+    AutoFire = {
+        enabled = false,
+        safe    = false,
+        rage    = false,
+        limit   = "Sempre seguro. Servidor nao verifica.",
+    },
+    FireRate = {
+        enabled = true,
+        safe    = 0.3,
+        rage    = 0.01,
+        limit   = "LIMITE: minimo 0.3 (padrao 0.7). Abaixo = flagged.",
+    },
+    Range = {
+        enabled = true,
+        safe    = 550,
+        rage    = 9999,
+        limit   = "LIMITE: maximo ~600 (padrao 350). Acima = flagged.",
+    },
+    ReloadTime = {
+        enabled = false,
+        safe    = 1.0,
+        rage    = 0.01,
+        limit   = "LIMITE: minimo ~1.0s (padrao 3.5s). Abaixo = flagged.",
+    },
+    ProjectileCount = {
+        enabled = false,
+        safe    = nil,
+        rage    = 10,
+        limit   = "NAO MEXA. Qualquer mudanca = flagged imediato.",
+    },
+    MaxAmmo = {
+        enabled = false,
+        safe    = nil,
+        rage    = 999,
+        limit   = "NAO MEXA. Servidor conta os tiros, vai detectar.",
+    },
+}
+
+-- ─── DOUBLE TAP ──────────────────────────────
+local DOUBLETAP = {
+    enabled = false,
+    -- Delay between shot 1 and shot 2.
+    -- Must be >= FireRate or GunController ignores the second shot.
+    -- Safe mode uses FireRate value so it always matches.
+    -- Rage mode uses a fixed small delay.
+    safeDelay  = 0.01,   -- slightly above safe FireRate (0.3)
+    rageDelay  = 0.08,   -- very fast, only works if FireRate is also low
+}
+
+-- ─── WARNINGS ────────────────────────────────
+print("==============================================")
+print(" GUN PATCHER — " .. (SAFE_MODE and "MODO SEGURO ✅" or "MODO RAGE ⚠️"))
+print("==============================================")
+print("LIMITES ANTI-CHEAT:")
+for attr, cfg in pairs(PATCHES) do
+    local status = cfg.enabled and "ON " or "OFF"
+    local val = SAFE_MODE and cfg.safe or cfg.rage
+    print(string.format("  [%s] %-16s -> %-8s | %s",
+        status, attr, tostring(val), cfg.limit))
+end
+if DOUBLETAP.enabled then
+    local delay = SAFE_MODE and DOUBLETAP.safeDelay or DOUBLETAP.rageDelay
+    print(string.format("  [ON ] %-16s -> %-8s | Delay >= FireRate ou segundo tiro e ignorado.",
+        "DoubleTap", tostring(delay).."s"))
+end
+print("==============================================")
+if not SAFE_MODE then
+    print("⚠️  AVISO: MODO RAGE ATIVO!")
+    print("⚠️  Valores extremos podem resultar em kick/ban.")
+    print("⚠️  Use por sua conta e risco.")
+    print("==============================================")
+end
+
+-- ─── ORIGINAIS (usado por 'gun restore') ─────
+local ORIG = setmetatable({}, {__mode = "k"})
+
+-- ─── PATCH FUNCTION ──────────────────────────
+local function PatchGun(tool)
+    if tool:GetAttribute("ToolType") ~= "Gun" then return end
+
+    local applied = {}
+    for attr, cfg in pairs(PATCHES) do
+        if not cfg.enabled then continue end
+        local val = SAFE_MODE and cfg.safe or cfg.rage
+        if val == nil then continue end
+        local before = tool:GetAttribute(attr)
+        if before == nil then continue end
+        ORIG[tool] = ORIG[tool] or {}
+        if ORIG[tool][attr] == nil then ORIG[tool][attr] = before end
+        tool:SetAttribute(attr, val)
+        table.insert(applied, attr .. ": " .. tostring(before) .. " -> " .. tostring(val))
+    end
+
+    if #applied > 0 then
+        print("[GunPatch] " .. tool.Name .. " patcheado:")
+        for _, msg in ipairs(applied) do print("  " .. msg) end
+        print("  Re-equipe para aplicar!")
+    end
+end
+
+-- ─── SCAN / HOOK BACKPACK ────────────────────
+local function ScanBackpack()
+    local bp = LocalPlayer:FindFirstChild("Backpack")
+    if not bp then return end
+    for _, v in ipairs(bp:GetChildren()) do
+        if v:IsA("Tool") and v:GetAttribute("ToolType") == "Gun" then
+            PatchGun(v)
+        end
+    end
+end
+
+local function HookBackpack(bp)
+    if not bp then return end
+    bp.ChildAdded:Connect(function(child)
+        task.wait(0.05)
+        if child:IsA("Tool") and child:GetAttribute("ToolType") == "Gun" then
+            PatchGun(child)
+        end
+    end)
+end
+
+-- ─── DOUBLE TAP HOOK ─────────────────────────
+-- Listens for MouseButton1 press and fires a second shot after a delay.
+-- Uses mouse1press/release to trigger GunController's InputBegan natively.
+local doubleTapConn = nil
+local isFiringDouble = false
+
+local function GetCurrentGun()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    for _, v in ipairs(char:GetChildren()) do
+        if v:IsA("Tool") and v:GetAttribute("ToolType") == "Gun" then
+            return v
+        end
+    end
+end
+
+local function StartDoubleTap()
+    if doubleTapConn then return end
+    doubleTapConn = UserInputService.InputBegan:Connect(function(input, gpe)
+        if gpe then return end
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+        -- Ignore if WE triggered this press (prevents infinite loop)
+        if isFiringDouble then return end
+
+        local gun = GetCurrentGun()
+        if not gun then return end
+
+        local delay = SAFE_MODE and DOUBLETAP.safeDelay or DOUBLETAP.rageDelay
+        task.spawn(function()
+            isFiringDouble = true
+            task.wait(delay)
+            local currentGun = GetCurrentGun()
+            if not currentGun then isFiringDouble = false; return end
+            local ammo = currentGun:GetAttribute("Local_CurrentAmmo") or 0
+            if ammo <= 0 then isFiringDouble = false; return end
+            if (currentGun:GetAttribute("Local_ReloadSession") or 0) ~= 0 then
+                isFiringDouble = false; return
+            end
+            -- Fire second shot — isFiringDouble=true blocks re-entry
+            mouse1press()
+            task.wait(0.06)
+            mouse1release()
+            -- Small extra wait before allowing another double tap
+            task.wait(delay)
+            isFiringDouble = false
+        end)
+    end)
+    print("[DoubleTap] Ativado")
+end
+
+local function StopDoubleTap()
+    if doubleTapConn then
+        doubleTapConn:Disconnect()
+        doubleTapConn = nil
+    end
+    isFiringDouble = false
+    print("[DoubleTap] Desativado")
+end
+
+-- ─── INIT ────────────────────────────────────
+ScanBackpack()
+HookBackpack(LocalPlayer:FindFirstChild("Backpack"))
+
+if DOUBLETAP.enabled then StartDoubleTap() end
+
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(1)
+    ScanBackpack()
+    HookBackpack(LocalPlayer:FindFirstChild("Backpack"))
+end)
+
+-- ─── RUNTIME API ─────────────────────────────
+getgenv().GUNPATCH = {
+    patches = PATCHES,
+    doubletap = DOUBLETAP,
+
+    safeMode = function(v)
+        SAFE_MODE = v
+        print("[GunPatch] Modo:", v and "SEGURO ✅" or "RAGE ⚠️")
+        ScanBackpack()
+    end,
+    toggle = function(attr, v)
+        if attr == "DoubleTap" then
+            DOUBLETAP.enabled = v
+            if v then StartDoubleTap() else StopDoubleTap() end
+        elseif PATCHES[attr] then
+            PATCHES[attr].enabled = v
+            print("[GunPatch]", attr, v and "ativado" or "desativado")
+            ScanBackpack()
+        end
+    end,
+    setValue = function(attr, safeVal, rageVal)
+        if PATCHES[attr] then
+            if safeVal ~= nil then PATCHES[attr].safe = safeVal end
+            if rageVal ~= nil then PATCHES[attr].rage = rageVal end
+            print("[GunPatch]", attr, "valores atualizados")
+            ScanBackpack()
+        end
+    end,
+    setDoubleTapDelay = function(safeDelay, rageDelay)
+        if safeDelay then DOUBLETAP.safeDelay = safeDelay end
+        if rageDelay then DOUBLETAP.rageDelay = rageDelay end
+        print("[DoubleTap] Delay atualizado — safe:", DOUBLETAP.safeDelay, "rage:", DOUBLETAP.rageDelay)
+    end,
+}
+
+print("[GunPatch] Carregado!")
+print("Unequip + re-equip para aplicar patches.")
+print("Runtime:")
+print("  getgenv().GUNPATCH.safeMode(false)              -- modo rage")
+print("  getgenv().GUNPATCH.toggle('DoubleTap', false)   -- desativar double tap")
+print("  getgenv().GUNPATCH.toggle('FireRate', false)     -- desativar patch")
+print("  getgenv().GUNPATCH.setValue('Range', 400, 800)  -- mudar valores")
+print("  getgenv().GUNPATCH.setDoubleTapDelay(0.35, 0.1) -- mudar delay")
+
+-- ─── TERMINAL (pl5.0): comando "gun" ─────────
+local function tp(t, c) if PLX.print then PLX.print(t, c and PLX.COL and PLX.COL[c] or nil) end end
+
+local function findAttr(name)
+    name = tostring(name or ""):lower()
+    if name == "doubletap" or name == "dt" then return "DoubleTap" end
+    for k in pairs(PATCHES) do
+        if k:lower() == name then return k end
+    end
+end
+
+local function parseVal(s)
+    if s == nil or s == "-" then return nil, true end
+    local l = s:lower()
+    if l == "true" then return true end
+    if l == "false" then return false end
+    if l == "nil" then return nil end
+    local n = tonumber(s)
+    if n ~= nil then return n end
+    return nil, false, "valor invalido: " .. s
+end
+
+local function fmt(v) return v == nil and "nil" or tostring(v) end
+
+local function gunStatus()
+    tp("modo: " .. (SAFE_MODE and "SEGURO" or "RAGE"), "yellow")
+    local names = {}
+    for k in pairs(PATCHES) do table.insert(names, k) end
+    table.sort(names)
+    for _, k in ipairs(names) do
+        local c = PATCHES[k]
+        tp(string.format("  [%s] %-15s safe=%-6s rage=%s", c.enabled and "ON " or "OFF", k, fmt(c.safe), fmt(c.rage)), c.enabled and "ok" or "muted")
+    end
+    tp(string.format("  [%s] %-15s safe=%-6s rage=%s", DOUBLETAP.enabled and "ON " or "OFF", "DoubleTap", fmt(DOUBLETAP.safeDelay), fmt(DOUBLETAP.rageDelay)), DOUBLETAP.enabled and "ok" or "muted")
+end
+
+local function gunHelp()
+    tp("gun status                       mostra config", "info")
+    tp("gun mode safe|rage               troca modo", "info")
+    tp("gun on|off <attr|doubletap|all>  liga/desliga patch", "info")
+    tp("gun set <attr> <safe> [rage]     valores ('-' pula, 1 valor = modo atual)", "info")
+    tp("gun delay <safe> <rage>          delay do DoubleTap ('-' pula)", "info")
+    tp("gun apply                        reaplica (arma equipada + backpack)", "info")
+    tp("gun restore                      volta valores originais", "info")
+    tp("attrs: SpreadRadius AutoFire FireRate Range ReloadTime ProjectileCount MaxAmmo", "muted")
+    tp("Re-equipe a arma depois de aplicar.", "muted")
+end
+
+local function applyAll()
+    ScanBackpack()
+    local cur = GetCurrentGun()
+    if cur then PatchGun(cur) end
+end
+
+PLX.gun = function(args)
+    local sub = (args[1] or "help"):lower()
+    if sub == "help" then gunHelp(); return true, "gun help" end
+    if sub == "status" or sub == "list" then gunStatus(); return true, "status" end
+
+    if sub == "mode" then
+        local m = (args[2] or ""):lower()
+        if m ~= "safe" and m ~= "rage" then return false, "uso: gun mode safe|rage" end
+        getgenv().GUNPATCH.safeMode(m == "safe")
+        applyAll()
+        return true, "modo " .. m
+    end
+
+    if sub == "on" or sub == "off" then
+        local on = sub == "on"
+        local target = (args[2] or ""):lower()
+        if target == "all" then
+            for k in pairs(PATCHES) do PATCHES[k].enabled = on end
+            DOUBLETAP.enabled = on
+            if on then StartDoubleTap() else StopDoubleTap() end
+            applyAll()
+            return true, "todos " .. (on and "ligados" or "desligados")
+        end
+        local attr = findAttr(target)
+        if not attr then return false, "attr invalido: " .. target end
+        getgenv().GUNPATCH.toggle(attr, on)
+        if attr ~= "DoubleTap" then applyAll() end
+        return true, attr .. (on and " ligado" or " desligado")
+    end
+
+    if sub == "set" then
+        local attr = findAttr(args[2])
+        if not attr or attr == "DoubleTap" then return false, "uso: gun set <attr> <safe> [rage]" end
+        if args[3] == nil then return false, "uso: gun set <attr> <safe> [rage]" end
+        local a, skipA, errA = parseVal(args[3])
+        if errA then return false, errA end
+        local b, skipB, errB = parseVal(args[4])
+        if errB then return false, errB end
+        if args[4] == nil then
+            -- 1 valor so: aplica no modo atual
+            if SAFE_MODE then PATCHES[attr].safe = a else PATCHES[attr].rage = a end
+        else
+            if not skipA then PATCHES[attr].safe = a end
+            if not skipB then PATCHES[attr].rage = b end
+        end
+        applyAll()
+        return true, string.format("%s safe=%s rage=%s", attr, fmt(PATCHES[attr].safe), fmt(PATCHES[attr].rage))
+    end
+
+    if sub == "delay" then
+        local s, r = tonumber(args[2]), tonumber(args[3])
+        if not s and not r then return false, "uso: gun delay <safe> <rage>" end
+        getgenv().GUNPATCH.setDoubleTapDelay(s, r)
+        return true, string.format("delay safe=%s rage=%s", fmt(DOUBLETAP.safeDelay), fmt(DOUBLETAP.rageDelay))
+    end
+
+    if sub == "apply" then
+        applyAll()
+        return true, "aplicado (re-equipe a arma)"
+    end
+
+    if sub == "restore" then
+        local n = 0
+        for tool, attrs in pairs(ORIG) do
+            if tool and tool.Parent then
+                for attr, v in pairs(attrs) do
+                    tool:SetAttribute(attr, v)
+                    n = n + 1
+                end
+            end
+        end
+        ORIG = setmetatable({}, {__mode = "k"})
+        return true, "restaurado: " .. n .. " attrs (re-equipe a arma)"
+    end
+
+    return false, "subcomando invalido (use: gun help)"
+end
+end
+
+do
+--[[
+    Auto Escape Route (Automatic Version)
+    Automatically teleports through checkpoints one by one and freezes the player.
+    Only works on Inmates team. MANUAL: roda via terminal `escape` a cada escape (nao dispara sozinho).
+]]
+
+local Players     = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+local CHECKPOINTS = {
+    Vector3.new(906,  69, 2358),
+    Vector3.new(941,  69, 2355),
+    Vector3.new(968,  69, 2351),
+    Vector3.new(1026, 69, 2348),
+    Vector3.new(1104, 69, 2343),
+}
+
+local TEAM_NAME       = "Inmates"
+local CRIMINAL_TEAM   = "Criminals"   -- Change this if the team name is different (e.g., "Criminal")
+local DELAY           = 0.1         -- seconds between each teleport
+local DETECTION_DELAY = 1.5         -- delay in seconds to wait for the criminal team change to register
+
+local running = false
+
+local function elog(t)
+    print(t)
+    if PLX.print then PLX.print(t, PLX.COL and PLX.COL.info or nil) end
+end
+
+local function IsInmate()
+    local team = LocalPlayer.Team
+    return team and team.Name == TEAM_NAME
+end
+
+local function IsCriminal()
+    local team = LocalPlayer.Team
+    return team and team.Name == CRIMINAL_TEAM
+end
+
+local function GetHRP()
+    local char = LocalPlayer.Character
+    return char and char:FindFirstChild("HumanoidRootPart")
+end
+
+local function ResetCharacter()
+    local char = LocalPlayer.Character
+    local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        humanoid.Health = 0
+    end
+end
+
+local function RunEscape()
+    if running then return end
+    if not IsInmate() then return end
+
+    running = true
+    elog("[Escape] Iniciando rota...")
+
+    local hrp = GetHRP()
+    if hrp then
+        -- Freeze the player by anchoring and killing velocity
+        hrp.Anchored = true
+        hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+    end
+
+    for i, pos in ipairs(CHECKPOINTS) do
+        if not running then break end
+
+        hrp = GetHRP()
+        if not hrp then
+            elog("[Escape] Sem personagem, abortando.")
+            break
+        end
+
+        hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
+        elog(string.format("[Escape] %d/%d — %.0f, %.0f, %.0f",
+            i, #CHECKPOINTS, pos.X, pos.Y, pos.Z))
+
+        if i < #CHECKPOINTS then
+            task.wait(DELAY)
+        end
+    end
+
+    -- Unanchor when finished
+    hrp = GetHRP()
+    if hrp then
+        hrp.Anchored = false
+    end
+
+    elog("[Escape] Rota concluida! Aguardando o time atualizar...")
+    
+    -- Wait for the specified detection delay to allow the game to register the team change
+    task.wait(DETECTION_DELAY)
+    
+    if IsCriminal() then
+        elog("[Escape] Detectado como Criminal! Resetando personagem...")
+        ResetCharacter()
+    else
+        elog("[Escape] Nao esta no time Criminal apos o tempo de espera.")
+    end
+
+    running = false
+end
+
+-- Manual: nada dispara sozinho. Rode "escape" no terminal a cada fuga.
+PLX.escape = function(args)
+    local sub = (args[1] or ""):lower()
+    if sub == "stop" then
+        running = false
+        return true, "parado"
+    end
+    if sub == "status" then
+        return true, string.format("team=%s | rodando=%s | checkpoints=%d | delay=%.2fs",
+            tostring(LocalPlayer.Team and LocalPlayer.Team.Name), tostring(running), #CHECKPOINTS, DELAY)
+    end
+    if running then return false, "ja esta rodando (escape stop)" end
+    if not IsInmate() then return false, "voce nao esta no time " .. TEAM_NAME end
+    task.spawn(RunEscape)
+    return true, "rota iniciada"
+end
+end
+
+
+-- ─── TERMINAL (pl5.0): comando "espcfg" (config do ESP do IY) ───
+do
+    local NAMED = {
+        red = Color3.fromRGB(255, 0, 0), green = Color3.fromRGB(0, 255, 0), blue = Color3.fromRGB(0, 120, 255),
+        yellow = Color3.fromRGB(255, 255, 0), white = Color3.fromRGB(255, 255, 255), black = Color3.fromRGB(0, 0, 0),
+        orange = Color3.fromRGB(255, 140, 0), purple = Color3.fromRGB(160, 60, 255), pink = Color3.fromRGB(255, 105, 180),
+        cyan = Color3.fromRGB(0, 255, 255),
+    }
+    local function tp(t, c) if PLX.print then PLX.print(t, c and PLX.COL and PLX.COL[c] or nil) end end
+    local function CFG()
+        return (type(ESPCFG) == "table" and ESPCFG) or IY_ENV.ESPCFG
+    end
+    local function espOn()
+        return (type(ESPenabled) == "boolean" and ESPenabled) or IY_ENV.ESPenabled == true
+    end
+    local function colorStr(c)
+        if not c then return "time (original)" end
+        return string.format("%d,%d,%d", math.floor(c.R * 255 + 0.5), math.floor(c.G * 255 + 0.5), math.floor(c.B * 255 + 0.5))
+    end
+    -- lê a cor no FIM dos tokens: "r g b", "#hex" ou nome. Retorna cor, qtdTokens
+    local function parseColor(tokens)
+        local n = #tokens
+        if n >= 3 then
+            local r, g, b = tonumber(tokens[n - 2]), tonumber(tokens[n - 1]), tonumber(tokens[n])
+            if r and g and b then
+                return Color3.fromRGB(math.clamp(r, 0, 255), math.clamp(g, 0, 255), math.clamp(b, 0, 255)), 3
+            end
+        end
+        local last = (tokens[n] or ""):lower()
+        local hex = last:match("^#?(%x%x%x%x%x%x)$")
+        if hex then
+            return Color3.fromRGB(tonumber(hex:sub(1, 2), 16), tonumber(hex:sub(3, 4), 16), tonumber(hex:sub(5, 6), 16)), 1
+        end
+        if NAMED[last] then return NAMED[last], 1 end
+        return nil, 0
+    end
+    local function refresh()
+        if not espOn() then return end
+        local cfg = CFG()
+        IY_EXEC_CMD("noesp", LP, true)
+        task.wait(0.2)
+        IY_EXEC_CMD((cfg and cfg.logic == true) and "espteam" or "esp", LP, true)
+    end
+
+    PLX.espcfg = function(args)
+        local cfg = CFG()
+        if not cfg then return false, "ESPCFG indisponivel (reexecute o script com o IY nao carregado)" end
+        if type(IY_EXEC_CMD) ~= "function" then return false, "motor do IY indisponivel" end
+        local sub = (args[1] or "help"):lower()
+
+        if sub == "help" then
+            tp("espcfg on|off                    liga/desliga ESP", "info")
+            tp("espcfg color <cor|reset>         cor de todos (nome, #hex ou r g b)", "info")
+            tp("espcfg color team <time> <cor|reset>   cor por time", "info")
+            tp("espcfg team <all|enemy|ally|t1,t2>     quais times aparecem", "info")
+            tp("espcfg name on|off               mostra/oculta o nome", "info")
+            tp("espcfg mode team|default         team = verde aliado/vermelho inimigo", "info")
+            tp("espcfg status", "info")
+            tp("cores: red green blue yellow white black orange purple pink cyan", "muted")
+            return true, "espcfg help"
+        end
+
+        if sub == "status" then
+            tp("ESP: " .. (espOn() and "ON" or "OFF"), espOn() and "ok" or "muted")
+            tp("cor global: " .. colorStr(cfg.color), "info")
+            for t, c in pairs(cfg.teamColors) do tp("  cor time '" .. t .. "': " .. colorStr(c), "info") end
+            local f = cfg.filter
+            if f == "list" then
+                local l = {}
+                for t in pairs(cfg.teams) do table.insert(l, t) end
+                f = "list (" .. table.concat(l, ", ") .. ")"
+            end
+            tp("times: " .. f, "info")
+            tp("nome: " .. (cfg.showName and "ON" or "OFF"), "info")
+            tp("modo: " .. (cfg.logic == true and "team (verde/vermelho)" or "default"), "info")
+            return true, "status"
+        end
+
+        if sub == "on" then
+            IY_EXEC_CMD((cfg.logic == true) and "espteam" or "esp", LP, true)
+            return true, "ESP ligado"
+        end
+        if sub == "off" then
+            IY_EXEC_CMD("noesp", LP, true)
+            return true, "ESP desligado"
+        end
+
+        if sub == "name" then
+            local v = (args[2] or ""):lower()
+            if v ~= "on" and v ~= "off" then return false, "uso: espcfg name on|off" end
+            cfg.showName = (v == "on")
+            task.spawn(refresh)
+            return true, "nome " .. v
+        end
+
+        if sub == "mode" then
+            local v = (args[2] or ""):lower()
+            if v ~= "team" and v ~= "default" then return false, "uso: espcfg mode team|default" end
+            cfg.logic = (v == "team") or nil
+            task.spawn(refresh)
+            return true, "modo " .. v
+        end
+
+        if sub == "team" then
+            local rest = table.concat(args, " ", 2):lower()
+            if rest == "" then return false, "uso: espcfg team <all|enemy|ally|t1,t2>" end
+            if rest == "all" or rest == "enemy" or rest == "ally" then
+                cfg.filter = rest
+                cfg.teams = {}
+            else
+                local set, count = {}, 0
+                for name in rest:gmatch("[^,]+") do
+                    name = name:match("^%s*(.-)%s*$")
+                    if name ~= "" then set[name] = true; count = count + 1 end
+                end
+                if count == 0 then return false, "nenhum time informado" end
+                cfg.filter = "list"
+                cfg.teams = set
+            end
+            task.spawn(refresh)
+            return true, "times: " .. cfg.filter
+        end
+
+        if sub == "color" or sub == "cor" then
+            local tokens = {table.unpack(args, 2)}
+            if #tokens == 0 then return false, "uso: espcfg color <cor|reset>" end
+            if tokens[1]:lower() == "team" or tokens[1]:lower() == "time" then
+                local rest = {table.unpack(tokens, 2)}
+                if #rest < 2 then return false, "uso: espcfg color team <time> <cor|reset>" end
+                if rest[#rest]:lower() == "reset" then
+                    local name = table.concat(rest, " ", 1, #rest - 1):lower()
+                    cfg.teamColors[name] = nil
+                    task.spawn(refresh)
+                    return true, "cor do time '" .. name .. "' resetada"
+                end
+                local c, used = parseColor(rest)
+                if not c then return false, "cor invalida" end
+                if #rest - used < 1 then return false, "informe o nome do time" end
+                local name = table.concat(rest, " ", 1, #rest - used):lower()
+                cfg.teamColors[name] = c
+                task.spawn(refresh)
+                return true, "time '" .. name .. "' -> " .. colorStr(c)
+            end
+            if tokens[1]:lower() == "reset" then
+                cfg.color = nil
+                cfg.teamColors = {}
+                task.spawn(refresh)
+                return true, "cores resetadas (cor do time)"
+            end
+            local c = parseColor(tokens)
+            if not c then return false, "cor invalida (nome, #hex ou r g b)" end
+            cfg.color = c
+            task.spawn(refresh)
+            return true, "cor " .. colorStr(c)
+        end
+
+        return false, "subcomando invalido (use: espcfg help)"
+    end
+end
+
 local CMDS = {
     {cmd = "clear", desc = "Limpar o terminal", usage = "clear", fn = nil},
     {cmd = "ui", desc = "Alternar modo de botões", usage = "ui [off]", fn = nil},
     {cmd = "help", desc = "Mostrar ajuda", usage = "help [comando]", fn = nil},
+    {cmd = "gun", desc = "Gun Patcher (gun help)", usage = "gun <status|mode|on|off|set|delay|apply|restore|help>", fn = function(args) return PLX.gun(args) end},
+    {cmd = "escape", desc = "Auto Escape manual (so Inmates)", usage = "escape [stop|status]", fn = function(args) return PLX.escape(args) end},
+    {cmd = "espcfg", desc = "Config do ESP do IY (espcfg help)", usage = "espcfg <on|off|color|team|name|mode|status|help>", fn = function(args) return PLX.espcfg(args) end},
 }
 
 local CMD_MAP = {}
@@ -13752,6 +14483,8 @@ local function println(text, color, mono)
         outScroll.CanvasPosition = Vector2.new(0, outLayout.AbsoluteContentSize.Y)
     end)
 end
+
+PLX.print, PLX.COL = println, COL
 
 local function clearOutput()
     for _, l in ipairs(OUT_LINES) do l:Destroy() end
