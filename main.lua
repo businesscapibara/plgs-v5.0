@@ -14038,6 +14038,7 @@ do
     if IY_ENV.PLESP_CLEANUP then pcall(IY_ENV.PLESP_CLEANUP) end
 
     local cfg = {
+		showWeapon   = false,
         enabled      = false,
         color        = nil,      -- Color3 global (nil = cor do time)
         teamColors   = {},       -- ["time minusculo"] = Color3
@@ -14113,6 +14114,14 @@ do
         if f == "list" then return plr.Team ~= nil and cfg.teams[plr.Team.Name:lower()] == true end
         return true
     end
+
+	local function weaponFor(char)
+	    if not char then return nil end
+	    for _, child in ipairs(char:GetChildren()) do
+	        if child:IsA("Tool") then return child.Name end
+	    end
+	    return nil
+	end
 
     local function colorFor(plr)
         local t = plr.Team
@@ -14210,6 +14219,10 @@ do
                 if cfg.showName then parts[#parts + 1] = plr.Name end
                 if cfg.showHealth and hum then parts[#parts + 1] = math.floor(hum.Health + 0.5) .. " HP" end
                 if cfg.showDistance and dist then parts[#parts + 1] = dist .. " studs" end
+				if cfg.showWeapon then
+				    local w = weaponFor(char)
+				    parts[#parts + 1] = w and ("Arma: " .. w) or "Desarmado"
+				end
                 local text = table.concat(parts, " | ")
                 local show = visible and text ~= ""
                 e.bb.Enabled = show
@@ -14264,6 +14277,7 @@ do
             tp("esp size <n>                    tamanho do texto", "info")
             tp("esp status", "info")
             tp("cores: red green blue yellow white black orange purple pink cyan", "muted")
+			tp("esp weapon on|off               mostra a arma na mao do inimigo", "info")
             return true, "esp help"
         end
 
@@ -14278,9 +14292,10 @@ do
                 f = "list (" .. table.concat(l, ", ") .. ")"
             end
             tp("times: " .. f, "info")
-            tp(string.format("nome=%s vida=%s dist=%s | fill=%s outline=%s maxdist=%s size=%s",
-                cfg.showName and "on" or "off", cfg.showHealth and "on" or "off", cfg.showDistance and "on" or "off",
-                tostring(cfg.fill), tostring(cfg.outline), tostring(cfg.maxDistance), tostring(cfg.textSize)), "info")
+            tp(string.format("nome=%s vida=%s dist=%s arma=%s | fill=%s outline=%s maxdist=%s size=%s",
+			    cfg.showName and "on" or "off", cfg.showHealth and "on" or "off", cfg.showDistance and "on" or "off",
+			    cfg.showWeapon and "on" or "off",
+    			tostring(cfg.fill), tostring(cfg.outline), tostring(cfg.maxDistance), tostring(cfg.textSize)), "info")
             return true, "status"
         end
 
@@ -14294,7 +14309,7 @@ do
             return true, "ESP desligado"
         end
 
-        local flags = {name = "showName", health = "showHealth", dist = "showDistance"}
+        local flags = {name = "showName", health = "showHealth", dist = "showDistance", weapon = "showWeapon"}
         if flags[sub] then
             local v = onoff(args[2])
             if v == nil then return false, "uso: esp " .. sub .. " on|off" end
@@ -14526,15 +14541,186 @@ do
         return false, "subcomando invalido (use: silent help)"
     end
 end
-				
+-- log de kill do skin changer ai porra texto grande pra eu ver depois
+-- aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+do
+    local Players = game:GetService("Players")
+    local TextChatService = game:GetService("TextChatService")
+
+    local cfg = { enabled = true, max = 6, holdTime = 8 }
+    IY_ENV.PLKILLLOG = cfg
+
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "PL_KillLog"
+    gui.ResetOnSpawn = false
+    pcall(function() gui.Parent = (type(gethui) == "function" and gethui()) or game:GetService("CoreGui") end)
+    if not gui.Parent then gui.Parent = PG end
+
+    local holder = Instance.new("Frame")
+    holder.BackgroundTransparency = 1
+    holder.AnchorPoint = Vector2.new(0.5, 0)
+    holder.Position = UDim2.new(0.5, 0, 0, 60)
+    holder.Size = UDim2.new(0, 420, 0, 160)
+    holder.Parent = gui
+    local layout = Instance.new("UIListLayout")
+    layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+    layout.Padding = UDim.new(0, 2)
+    layout.Parent = holder
+
+    local function addLine(killer, victim, weapon)
+        local row = Instance.new("TextLabel")
+        row.BackgroundTransparency = 1
+        row.Size = UDim2.new(1, 0, 0, 20)
+        row.Font = Enum.Font.SourceSansBold
+        row.TextSize = 16
+        row.TextStrokeTransparency = 0
+        row.RichText = true
+        local w = weapon and (' <font color="#FFD24D">with ' .. weapon .. '</font>') or ""
+        row.Text = string.format('<font color="#FFFFFF">%s</font> <font color="#CCCCCC">killed</font> <font color="#FF5C5C">%s</font>%s', killer, victim, w)
+        row.Parent = holder
+        task.delay(cfg.holdTime, function() if row then row:Destroy() end end)
+        local labels = {}
+        for _, v in ipairs(holder:GetChildren()) do if v:IsA("TextLabel") then table.insert(labels, v) end end
+        if #labels > cfg.max then labels[1]:Destroy() end
+    end
+
+    local function tryParse(msg)
+        local killer, victim, weapon = msg:match("^(.-) killed (.-) with (.+)$")
+        if not killer then killer, victim = msg:match("^(.-) killed (.+)$") end
+        return killer, victim, weapon
+    end
+
+    if not isLegacyChat then
+        TextChatService.MessageReceived:Connect(function(tcm)
+            if not cfg.enabled then return end
+            local ok, text = pcall(function() return tcm.Text end)
+            if ok and text then
+                local killer, victim, weapon = tryParse(text)
+                if killer then addLine(killer, victim, weapon) end
+            end
+        end)
+    else
+        for _, plr in pairs(Players:GetPlayers()) do
+            plr.Chatted:Connect(function(msg)
+                if not cfg.enabled then return end
+                local killer, victim, weapon = tryParse(msg)
+                if killer then addLine(killer, victim, weapon) end
+            end)
+        end
+    end
+
+    local function tp(t, c) if PLX.print then PLX.print(t, c and PLX.COL and PLX.COL[c] or nil) end end
+    PLX.killlog = function(args)
+        local sub = (args[1] or "help"):lower()
+        if sub == "help" then
+            tp("killlog on|off      liga/desliga o painel", "info")
+            tp("killlog max <n>     quantas linhas ficam na tela", "info")
+            tp("killlog time <s>    tempo que cada linha fica visivel", "info")
+            tp("killlog status", "info")
+            return true, "killlog help"
+        end
+        if sub == "on" then cfg.enabled = true; gui.Enabled = true; return true, "killlog ligado" end
+        if sub == "off" then cfg.enabled = false; return true, "killlog desligado" end
+        if sub == "max" then
+            local n = tonumber(args[2]); if not n then return false, "uso: killlog max <n>" end
+            cfg.max = math.clamp(math.floor(n), 1, 15); return true, "max = " .. cfg.max
+        end
+        if sub == "time" then
+            local n = tonumber(args[2]); if not n then return false, "uso: killlog time <s>" end
+            cfg.holdTime = n; return true, "time = " .. n .. "s"
+        end
+        if sub == "status" then
+            tp(string.format("killlog: %s | max=%d | time=%ss", cfg.enabled and "ON" or "OFF", cfg.max, tostring(cfg.holdTime)), "info")
+            return true, "status"
+        end
+        return false, "subcomando invalido (use killlog help)"
+    end
+end
+
+do
+    local function tp(t, c) if PLX.print then PLX.print(t, c and PLX.COL and PLX.COL[c] or nil) end end
+    PLX.skin = function(args)
+        local SC = getgenv().SkinChangerMenu
+        local sub = (args[1] or "help"):lower()
+        if sub == "help" then
+            tp("skin color <r> <g> <b> | <#hex>   cor da skin", "info")
+            tp("skin texture <id>                 decal/textura (rbxassetid ou so o numero)", "info")
+            tp("skin material <NomeDoEnum>         ex: Neon, Metal, Glass", "info")
+            tp("skin weapon <nome> on|off          marca/desmarca arma alvo", "info")
+            tp("skin apply                         aplica a skin atual", "info")
+            tp("skin menu on|off                    mostra/esconde a janela visual", "info")
+            tp("skin status", "info")
+            return true, "skin help"
+        end
+        if not SC then return false, "Skin Changer nao esta carregado nesse contexto" end
+        if sub == "apply" then
+            if type(SC.VerificarEAplicar) == "function" then SC.VerificarEAplicar(false) end
+            return true, "skin aplicada"
+        end
+        if sub == "color" then
+            if args[2] and not args[3] then
+                local hex = args[2]:gsub("#", "")
+                if #hex ~= 6 then return false, "uso: skin color <#hex> | r g b" end
+                local r,g,b = tonumber("0x"..hex:sub(1,2)), tonumber("0x"..hex:sub(3,4)), tonumber("0x"..hex:sub(5,6))
+                if not (r and g and b) then return false, "hex invalido" end
+                SC.State.color = Color3.fromRGB(r,g,b)
+                return true, "cor atualizada (use 'skin apply')"
+            end
+            local r,g,b = tonumber(args[2]), tonumber(args[3]), tonumber(args[4])
+            if not (r and g and b) then return false, "uso: skin color <r> <g> <b> | <#hex>" end
+            SC.State.color = Color3.fromRGB(math.clamp(r,0,255), math.clamp(g,0,255), math.clamp(b,0,255))
+            return true, "cor atualizada (use 'skin apply')"
+        end
+        if sub == "texture" then
+            local id = args[2]
+            if not id then return false, "uso: skin texture <id>" end
+            if not id:match("^rbxassetid://") then
+                local num = id:match("(%d+)")
+                if num then id = "rbxassetid://" .. num end
+            end
+            SC.State.decalId = id
+            return true, "textura atualizada (use 'skin apply')"
+        end
+        if sub == "material" then
+            local nome = args[2]
+            if not nome then return false, "uso: skin material <NomeDoEnum>" end
+            local ok, mat = pcall(function() return Enum.Material[nome] end)
+            if not ok or not mat then return false, "material invalido (ex: Neon, Metal, Glass)" end
+            SC.State.material = mat
+            return true, "material = " .. nome .. " (use 'skin apply')"
+        end
+        if sub == "weapon" then
+            local nome, onoff = args[2], (args[3] or ""):lower()
+            if not nome or (onoff ~= "on" and onoff ~= "off") then return false, "uso: skin weapon <nome> on|off" end
+            SC.ArmasAlvo[nome] = (onoff == "on")
+            return true, nome .. (onoff == "on" and " marcada" or " desmarcada")
+        end
+        if sub == "menu" then
+            local v = (args[2] or ""):lower()
+            if v ~= "on" and v ~= "off" then return false, "uso: skin menu on|off" end
+            if SC.Main then SC.Main.Visible = (v == "on") end
+            return true, "menu " .. v
+        end
+        if sub == "status" then
+            tp("cor: " .. tostring(SC.State.color), "info")
+            tp("textura: " .. (SC.State.decalId ~= "" and SC.State.decalId or "(nenhuma)"), "info")
+            tp("material: " .. tostring(SC.State.material), "info")
+            return true, "status"
+        end
+        return false, "subcomando invalido (use: skin help)"
+    end
+end
+
 local CMDS = {
-    {cmd = "clear", desc = "Limpar o terminal", usage = "clear", fn = nil},
-    {cmd = "ui", desc = "Alternar modo de botões", usage = "ui [off]", fn = nil},
-    {cmd = "help", desc = "Mostrar ajuda", usage = "help [comando]", fn = nil},
-    {cmd = "gun", desc = "Gun Patcher (gun help)", usage = "gun <status|mode|on|off|set|delay|apply|restore|help>", fn = function(args) return PLX.gun(args) end},
-    {cmd = "escape", desc = "Auto Escape manual (so Inmates)", usage = "escape [stop|status]", fn = function(args) return PLX.escape(args) end},
+	{cmd = "ui", desc = "Alternar modo de botões", usage = "ui [off]", fn = nil},
+	{cmd = "help", desc = "Mostrar ajuda", usage = "help [comando]", fn = nil},
+	{cmd = "clear", desc = "Limpar o terminal", usage = "clear", fn = nil},
     {cmd = "esp", desc = "ESP novo (esp help)", usage = "esp <on|off|color|team|name|health|dist|mode|fill|outline|maxdist|size|status|help>", fn = function(args) return PLX.esp(args) end},
-	{cmd = "silent", desc = "Silent Aim (silent help)", usage = "silent <on|off|fov|part|team|circle|status|help>", fn = function(args) return PLX.silent(args) end}
+	{cmd = "gun", desc = "Gun Patcher (gun help)", usage = "gun <status|mode|on|off|set|delay|apply|restore|help>", fn = function(args) return PLX.gun(args) end},
+	{cmd = "skin", desc = "Bridge pro Skin Changer (skin help)", usage = "skin <color|texture|material|weapon|apply|menu|status|help>", fn = function(args) return PLX.skin(args) end},
+    {cmd = "escape", desc = "Auto Escape manual (so Inmates)", usage = "escape [stop|status]", fn = function(args) return PLX.escape(args) end},
+	{cmd = "silent", desc = "Silent Aim (silent help)", usage = "silent <on|off|fov|part|team|circle|status|help>", fn = function(args) return PLX.silent(args) end},
+	{cmd = "killlog", desc = "Kill log estilo Prison Life (killlog help)", usage = "killlog <on|off|max|time|status|help>", fn = function(args) return PLX.killlog(args) end}
 }
 
 local CMD_MAP = {}
@@ -14849,6 +15035,13 @@ local function buildBtnPanel()
         if not child:IsA("UIGridLayout") and not child:IsA("UIPadding") then child:Destroy() end
     end
 
+	local UI_PLX_TOGGLES = {
+	    {label = "ESP",       on = function() PLX.esp({"on"}) end,            off = function() PLX.esp({"off"}) end,            state = function() return IY_ENV.PLESP and IY_ENV.PLESP.enabled end},
+	    {label = "ESP Arma",  on = function() PLX.esp({"weapon","on"}) end,   off = function() PLX.esp({"weapon","off"}) end,   state = function() return IY_ENV.PLESP and IY_ENV.PLESP.showWeapon end},
+	    {label = "Silent Aim",on = function() PLX.silent({"on"}) end,         off = function() PLX.silent({"off"}) end,         state = function() return IY_ENV.PLSILENT and IY_ENV.PLSILENT.enabled end},
+	    {label = "Kill Log",  on = function() PLX.killlog({"on"}) end,        off = function() PLX.killlog({"off"}) end,        state = function() return IY_ENV.PLKILLLOG and IY_ENV.PLKILLLOG.enabled end},
+	}
+
     for index, entry in ipairs(UI_TOGGLES) do
         local btn = Instance.new("TextButton", btnPanel)
         btn.Name = "Toggle_"..entry.label:gsub("%W", "")
@@ -14907,6 +15100,34 @@ local function buildBtnPanel()
             end
         end)
     end
+
+	local plxStart = actionStart + #UI_ACTIONS + 1
+	for i, entry in ipairs(UI_PLX_TOGGLES) do
+	    local btn = Instance.new("TextButton", btnPanel)
+	    btn.LayoutOrder = plxStart + i
+	    btn.Size = UDim2.fromOffset(108, 30)
+	    btn.BorderSizePixel = 0
+	    btn.Text = entry.label
+	    btn.Font = Enum.Font.Code
+	    btn.TextSize = 10
+	    btn.AutoButtonColor = false
+	    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+	    local stroke = Instance.new("UIStroke", btn); stroke.Thickness = 1
+	
+	    local function refresh()
+	        local on = entry.state() == true
+	        btn.BackgroundColor3 = on and Color3.fromRGB(0, 105, 45) or Color3.fromRGB(18, 27, 20)
+	        btn.TextColor3 = on and Color3.fromRGB(225,255,225) or Color3.fromRGB(155,190,160)
+	        stroke.Color = on and Color3.fromRGB(0,230,90) or Color3.fromRGB(0,75,30)
+	    end
+	    refresh()
+	
+	    btn.MouseButton1Click:Connect(function()
+	        if entry.state() then entry.off() else entry.on() end
+	        refresh()
+	        println("[ui] " .. entry.label .. (entry.state() and " ativado" or " desativado"), COL.ok)
+	    end)
+	end
 end
 local function setUIMode(on)
     uiMode = on
