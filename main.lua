@@ -14402,103 +14402,126 @@ end
 
 -- ===================== SILENT AIM =====================
 do
-    local Players          = game:GetService("Players")
-    local RunService       = game:GetService("RunService")
-    local UserInputService = game:GetService("UserInputService")
-    local LocalPlayer      = Players.LocalPlayer
+    local players = game:GetService("Players")
+    local run_service = game:GetService("RunService")
+    local user_input_service = game:GetService("UserInputService")
+    local local_player = players.LocalPlayer
 
     if IY_ENV.PLSILENT_CLEANUP then pcall(IY_ENV.PLSILENT_CLEANUP) end
 
-    -- config persiste entre reexecuções (o hook antigo continua lendo esta mesma tabela)
     local cfg = IY_ENV.PLSILENT or {}
-    if cfg.fov == nil then cfg.fov = 100 end
+    if cfg.fov == nil then cfg.fov = 90 end
     if cfg.hitPart == nil then cfg.hitPart = "Head" end
     if cfg.teamCheck == nil then cfg.teamCheck = true end
     if cfg.showFov == nil then cfg.showFov = true end
     cfg.enabled = false
     IY_ENV.PLSILENT = cfg
 
-    -- UNKNOWN: nome da função alvo neste build. Confirme no console (ver recipe).
-    local TARGET_NAME = "castRay"
-
-    -- círculo de FOV (opcional: sem Drawing, o silent aim funciona sem círculo)
-    local fovCircle
+    local fov_circle
     if type(Drawing) == "table" and type(Drawing.new) == "function" then
         local ok, c = pcall(Drawing.new, "Circle")
         if ok and c then
-            fovCircle = c
-            c.Visible, c.Filled, c.NumSides = false, false, 64
-            c.Color, c.Transparency = Color3.fromRGB(255, 255, 255), 1
+            fov_circle = c
+            c.Visible = false
+            c.Color = Color3.fromRGB(255, 255, 255)
+            c.Radius = cfg.fov
+            c.Transparency = 1
+            c.Filled = false
+            c.NumSides = 64
         end
     end
-    local renderConn = RunService.PreRender:Connect(function()
-        if not fovCircle then return end
+
+    local render_conn = run_service.PreRender:Connect(function()
+        if not fov_circle then return end
         pcall(function()
-            fovCircle.Position = UserInputService:GetMouseLocation()
-            fovCircle.Radius   = cfg.fov
-            fovCircle.Visible  = cfg.enabled and cfg.showFov
+            fov_circle.Position = user_input_service:GetMouseLocation()
+            fov_circle.Radius = cfg.fov
+            fov_circle.Visible = cfg.enabled and cfg.showFov
         end)
     end)
 
-    local function getClosest(partName, fov)
-        local cam = workspace.CurrentCamera
-        if not cam then return nil end
-        local mouse = UserInputService:GetMouseLocation()
-        local bestPlayer, bestPos, bestDist = nil, nil, fov or math.huge
-        for _, plr in ipairs(Players:GetPlayers()) do
-            if plr == LocalPlayer then continue end
-            if cfg.teamCheck and plr.Team == LocalPlayer.Team then continue end
-            local char = plr.Character
-            local hum  = char and char:FindFirstChildOfClass("Humanoid")
-            local part = char and char:FindFirstChild(partName)
-            if not (hum and part and hum.Health > 0) then continue end
-            local sp = cam:WorldToViewportPoint(part.Position)
-            if sp.Z <= 0 then continue end
-            local d = (Vector2.new(sp.X, sp.Y) - mouse).Magnitude
-            if d < bestDist then bestPlayer, bestPos, bestDist = plr, part.Position, d end
-        end
-        return bestPlayer, bestPos
-    end
+    local function get_closest_player(part_name, fov)
+        fov = fov or math.huge
+        local closest_player, closest_position, closest_distance = nil, nil, fov
+        local camera = workspace.CurrentCamera
+        if not camera then return nil end
+        local screen_center = user_input_service:GetMouseLocation()
 
-    -- hook instalado UMA vez; ligar/desligar só muda cfg.enabled
-    local state = IY_ENV.PLSILENT_HOOK  -- {fn=, old=} se já hookado numa execução anterior
-    local function hookFn(...)
-        if cfg.enabled then
-            local ok, plr, pos = pcall(getClosest, cfg.hitPart, cfg.fov)
-            if ok and plr and pos then
-                local part = plr.Character and plr.Character:FindFirstChild(cfg.hitPart)
-                -- UNKNOWN: formato de retorno do original (part, position) veio do seu código, nao verificado
-                if part then return part, pos end
+        for _, player in players:GetPlayers() do
+            if player == local_player then continue end
+            if cfg.teamCheck and player.Team == local_player.Team then continue end
+
+            local character = player.Character
+            if not character then continue end
+
+            local humanoid = character:FindFirstChildOfClass("Humanoid")
+            if humanoid and humanoid.Health <= 0 then continue end
+
+            local part = character:FindFirstChild(part_name)
+            if not part then continue end
+
+            local screen_position = camera:WorldToViewportPoint(part.Position)
+            if screen_position.Z <= 0 then continue end
+
+            local screen_distance = (Vector2.new(screen_position.X, screen_position.Y) - screen_center).Magnitude
+            if screen_distance < closest_distance then
+                closest_player = player
+                closest_position = part.Position
+                closest_distance = screen_distance
             end
         end
-        local old = state and state.old
-        if old then return old(...) end
+
+        return closest_player, closest_position
     end
 
-    local function installHook()
-        if state then return true end
+    local function LPH_NO_UPVALUES(Function)
+        return function(...)
+            return Function(...)
+        end
+    end
+
+    -- hook instalado uma vez; reaproveitado se o script for reexecutado
+    local hook = IY_ENV.PLSILENT_HOOK
+
+    local function install_hook()
+        if hook then return true end
         if type(filtergc) ~= "function" then return false, "filtergc ausente neste executor" end
         if type(hookfunction) ~= "function" then return false, "hookfunction ausente neste executor" end
-        local ok, fn = pcall(filtergc, "function", {Name = TARGET_NAME}, true)
-        if not ok or type(fn) ~= "function" then
-            return false, TARGET_NAME .. " nao encontrado neste build"
+
+        -- UNKNOWN: nome "castRay" e retorno (part, position) vieram do seu script, nao verificados
+        local ok, castRay = pcall(filtergc, "function", {Name = "castRay"}, true)
+        if not ok or type(castRay) ~= "function" then
+            return false, "castRay nao encontrado neste build"
         end
-        local s = {fn = fn}
-        state = s
-        local ok2, old = pcall(hookfunction, fn, hookFn)
+
+        local h = {fn = castRay}
+        hook = h
+        local old
+        local ok2, res = pcall(function()
+            old = hookfunction(castRay, LPH_NO_UPVALUES(function(...)
+                if cfg.enabled then
+                    local ok3, closest_player, closest_position = pcall(get_closest_player, cfg.hitPart, cfg.fov)
+                    if ok3 and closest_player and closest_position and closest_player.Character then
+                        local target = closest_player.Character:FindFirstChild(cfg.hitPart)
+                        if target then return target, closest_position end
+                    end
+                end
+                return old(...)
+            end))
+        end)
         if not ok2 or type(old) ~= "function" then
-            state = nil
-            return false, "hookfunction falhou: " .. tostring(old)
+            hook = nil
+            return false, "hookfunction falhou: " .. tostring(res)
         end
-        s.old = old
-        IY_ENV.PLSILENT_HOOK = s
+        h.old = old
+        IY_ENV.PLSILENT_HOOK = h
         return true
     end
 
     IY_ENV.PLSILENT_CLEANUP = function()
         cfg.enabled = false
-        if renderConn then renderConn:Disconnect() end
-        if fovCircle then pcall(function() fovCircle:Remove() end) end
+        if render_conn then render_conn:Disconnect() end
+        if fov_circle then pcall(function() fov_circle:Remove() end) end
     end
 
     local function tp(t, c) if PLX.print then PLX.print(t, c and PLX.COL and PLX.COL[c] or nil) end end
@@ -14515,7 +14538,7 @@ do
             return true, "silent help"
         end
         if sub == "on" then
-            local ok, err = installHook()
+            local ok, err = install_hook()
             if not ok then return false, err end
             cfg.enabled = true
             return true, "silent aim ligado"
@@ -14540,9 +14563,9 @@ do
         end
         if sub == "status" then
             tp(string.format("silent: %s | hook=%s | fov=%d | part=%s | team=%s | circle=%s | drawing=%s",
-                cfg.enabled and "ON" or "OFF", state and "instalado" or "nao",
+                cfg.enabled and "ON" or "OFF", hook and "instalado" or "nao",
                 cfg.fov, cfg.hitPart, cfg.teamCheck and "on" or "off",
-                cfg.showFov and "on" or "off", fovCircle and "ok" or "ausente"), "info")
+                cfg.showFov and "on" or "off", fov_circle and "ok" or "ausente"), "info")
             return true, "status"
         end
         return false, "subcomando invalido (use: silent help)"
