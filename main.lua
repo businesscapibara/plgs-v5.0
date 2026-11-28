@@ -14654,6 +14654,4800 @@ do
     end
 end
 
+do
+	-- skin changer boladão do simow
+	pcall(function()
+	local old = game:GetService("Players").LocalPlayer:FindFirstChild("PlayerGui") and game:GetService("Players").LocalPlayer.PlayerGui:FindFirstChild("SkinChangerMenu")
+	if old then old:Destroy() end
+	end)
+
+	wait(0.5)
+
+	local Players = game:GetService("Players")
+	local UserInputService = game:GetService("UserInputService")
+	local TweenService = game:GetService("TweenService")
+	local Lighting = game:GetService("Lighting")
+	local ContentProvider = game:GetService("ContentProvider")
+	local RunService = game:GetService("RunService")
+	local ReplicatedStorage = game:GetService("ReplicatedStorage")
+	local Debris = game:GetService("Debris")
+	local player = Players.LocalPlayer
+
+	local ok_main, err_main = pcall(function()
+
+	local GUI = {}
+
+	-- ================= CONFIG =================
+	local armasAlvo = {
+		["FAL"] = true,
+		["M700"] = true,
+		["Revolver"] = true,
+		["AK-47"] = true,
+		["M4A1"] = true,
+		["Remington 870"] = true,
+		["MP5"] = true,
+		["M9"] = true,
+		["Riot Shield"] = true,
+		["Taser"] = true,
+	}
+
+	local skinsPorArma = {}
+
+	-- ================= PRESETS DE MESH =================
+	local function AplicarDragonLoreM700(tool)
+		if tool.Name ~= "M700" then return end
+		local meshes = {}
+		for _, v in ipairs(tool:GetDescendants()) do
+			if v:IsA("SpecialMesh") then table.insert(meshes, v) end
+		end
+		if #meshes < 2 then
+			warn("[DragonLore] Meshes insuficientes no M700:", #meshes)
+			return
+		end
+		local alvo = meshes[2]
+		alvo.MeshType  = Enum.MeshType.FileMesh
+		alvo.MeshId    = "rbxassetid://430553868"
+		alvo.TextureId = "rbxassetid://532476177"
+		alvo.Scale     = Vector3.new(0.0011, 0.0011, 0.0011)
+		alvo.Offset    = Vector3.new(0, 0.3, 1)
+		for i, mesh in ipairs(meshes) do
+			if i ~= 2 then
+				local part = mesh.Parent
+				if part and part:IsA("BasePart") then
+					part.Transparency = 1
+					part.CanCollide   = false
+					part.CastShadow   = false
+				end
+			end
+		end
+	end
+
+	local presetsMesh = {
+		["M700"] = {
+			nome    = "Dragon Lore",
+			ativo   = true,
+			aplicar = AplicarDragonLoreM700,
+		},
+	}
+
+	local state = {
+		color = Color3.fromRGB(255, 105, 180),
+		decalId = "",
+		material = Enum.Material.SmoothPlastic,
+		removerTextura = false,
+		metodoTextura = "Decal",
+		texturaTransparencia = 0,
+		parteTransparencia = 0,
+		autoAplicarRespawn = false,
+		autoAplicarEquip = false,
+		ignorarPartsInvisiveis = true,
+		headlessAtivo = false,
+		korbloxAtivo = false,
+		killfeedAtivo = true,
+		contadorKillsAtivo = true,
+		roupaPropriaAtiva = false,
+		hudFofoAtivo = false,
+		killsoundsAtivo = true,
+		killsoundsVolume = 1,
+		somDeKillAtivo = false,
+		somDeKillVolume = 1,
+		somDeKillId = "",
+	}
+
+	-- IDs padrao dos killsounds (estilo Quake/UT). Fica top-level (fora de do...end) de proposito:
+	-- tanto a UI da aba Sons (mais pra cima no arquivo) quanto o detector de killstreak (mais pra
+	-- baixo, dentro do bloco KILLFEED) precisam enxergar essa mesma tabela.
+	local sonsKillstreak = {
+		-- multi-kill (kills seguidas em pouco tempo, sem morrer no meio)
+		duplo = "rbxassetid://116907610084760",       -- double kill
+		triplo = "rbxassetid://119830932835553",      -- triple kill
+		multi = "rbxassetid://96407896521729",        -- multi kill
+		mega = "rbxassetid://937895810",              -- mega kill
+		ultra = "rbxassetid://937885646",             -- ultra kill
+		monstro = "rbxassetid://938076502",           -- monster kill
+		ludicro = "rbxassetid://108020708041075",     -- ludicrouskill
+		absurdo = "rbxassetid://80101615094724",      -- wicked-sick
+
+		-- spree (kills seguidas sem morrer, sem limite de tempo)
+		primeiroSangue = "rbxassetid://93254093525275", -- first blood
+		spree = "rbxassetid://937898383",                -- killing spree
+		rampage = "rbxassetid://136860690676996",        -- rampage
+		dominando = "rbxassetid://99293259444045",       -- dominating
+		imparavel = "rbxassetid://6410920435",           -- usando "invulnerable" no lugar de unstoppable
+		deus = "rbxassetid://6410918897",                -- godlike
+
+		-- guardados, sem gatilho automatico ainda:
+		perfeito = "rbxassetid://204810811",          -- perfect
+		impressive = "rbxassetid://117729196241464",  -- impressive
+		hatTrick = "rbxassetid://6410919639",         -- hat trick
+		negado = "rbxassetid://6410921260",           -- denied
+		destruidor = "rbxassetid://6410924125",       -- wrecker
+	}
+	GUI.SonsKillstreak = sonsKillstreak
+
+	local partesSelecionadas = {}
+	local toolInspecionada = nil
+
+	-- ================= HELPERS DE COMPATIBILIDADE =================
+	local function SafeHex(hex)
+		hex = hex:gsub("#", "")
+		if #hex >= 6 then
+			local r = tonumber("0x" .. hex:sub(1,2))
+			local g = tonumber("0x" .. hex:sub(3,4))
+			local b = tonumber("0x" .. hex:sub(5,6))
+			if r and g and b then
+				return Color3.fromRGB(r, g, b)
+			end
+		end
+		return nil
+	end
+
+	local function ManageCanvas(scrollFrame, listLayout)
+		local function update()
+			scrollFrame.CanvasSize = UDim2.new(0, 0, 0, listLayout.AbsoluteContentSize.Y + 16)
+		end
+		listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(update)
+		update()
+	end
+
+	local function ManageSizeFromLayout(frame, layout)
+		local function update()
+			frame.Size = UDim2.new(1, 0, 0, layout.AbsoluteContentSize.Y + 4)
+		end
+		layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(update)
+		update()
+	end
+
+	-- ================= PRESETS DE SKYBOX =================
+	local skyboxPresets = {
+		{ nome = "Padrao", Bk = "", Dn = "", Ft = "", Lf = "", Rt = "", Up = "" },
+		{ nome = "Sky Classico", Bk = "rbxassetid://271042516", Dn = "rbxassetid://271077243", Ft = "rbxassetid://271042556", Lf = "rbxassetid://271042310", Rt = "rbxassetid://271042467", Up = "rbxassetid://271077958" },
+		{ nome = "Sky", Bk = "rbxassetid://155441936", Dn = "rbxassetid://155441802", Ft = "rbxassetid://155441818", Lf = "rbxassetid://155441777", Rt = "rbxassetid://155441874", Up = "rbxassetid://155441905" },
+		{ nome = "Cat123chirs", Bk = "rbxassetid://15593304635", Dn = "rbxassetid://15593307656", Ft = "rbxassetid://15593319759", Lf = "rbxassetid://15593316960", Rt = "rbxassetid://15593329329", Up = "rbxassetid://15593324381" },
+		{ nome = "Minecraft", Bk = "rbxassetid://2403410783", Dn = "rbxassetid://2403429771", Ft = "rbxassetid://2403410783", Lf = "rbxassetid://2403410783", Rt = "rbxassetid://2403410783", Up = "rbxassetid://2403437847" },
+		{ nome = "Sunset", Bk = "rbxassetid://458016711", Dn = "rbxassetid://458016826", Ft = "rbxassetid://458016532", Lf = "rbxassetid://458016655", Rt = "rbxassetid://458016782", Up = "rbxassetid://458016792" },
+		{ nome = "Night", Bk = "rbxassetid://5346760450", Dn = "rbxassetid://5346760689", Ft = "rbxassetid://5346760919", Lf = "rbxassetid://5346761102", Rt = "rbxassetid://5346761335", Up = "rbxassetid://5346761509" },
+		{ nome = "Nuvens", Bk = "rbxassetid://14133939547", Dn = "rbxassetid://14133938465", Ft = "rbxassetid://14133939547", Lf = "rbxassetid://14133939547", Rt = "rbxassetid://14133939547", Up = "rbxassetid://14133942685" },
+	}
+
+	-- ================= AMBIENTE =================
+	local ambienteState = {
+		skyboxIndex = 1,
+		colorCorrectionBrightness = 0,
+		colorCorrectionContrast = 0,
+		colorCorrectionSaturation = 0,
+		colorCorrectionTintColor = Color3.fromRGB(255, 255, 255),
+		bloomIntensity = 0, bloomSize = 24, bloomThreshold = 2,
+		dofFarIntensity = 0, dofNearIntensity = 0, dofFocusDistance = 0.1,
+		atmosphereDensity = 0.3, atmosphereHaze = 0, atmosphereGlare = 0,
+	}
+
+	local function ObterOuCriarEfeito(className, name)
+		local existente = Lighting:FindFirstChild(name)
+		if existente and existente:IsA(className) then return existente end
+		if existente then pcall(function() existente:Destroy() end) end
+		local ok, efeito = pcall(function()
+			local e = Instance.new(className)
+			e.Name = name
+			e.Parent = Lighting
+			return e
+		end)
+		if ok then return efeito end
+		return nil
+	end
+
+	local fxColorCorrection = ObterOuCriarEfeito("ColorCorrectionEffect", "SkinCC")
+	local fxBloom = ObterOuCriarEfeito("BloomEffect", "SkinBloom")
+	local fxDof = ObterOuCriarEfeito("DepthOfFieldEffect", "SkinDoF")
+	local fxAtmosphere = ObterOuCriarEfeito("Atmosphere", "SkinAtmo")
+
+	if fxBloom then
+		fxBloom.Intensity = 0; fxBloom.Size = 24; fxBloom.Threshold = 2
+	end
+	if fxDof then
+		fxDof.FarIntensity = 0; fxDof.NearIntensity = 0; fxDof.FocusDistance = 0.1
+	end
+	if fxAtmosphere then
+		fxAtmosphere.Density = 0.3; fxAtmosphere.Haze = 0; fxAtmosphere.Glare = 0
+	end
+
+	local function AplicarSkybox(index)
+		local preset = skyboxPresets[index]
+		if not preset then return end
+		ambienteState.skyboxIndex = index
+		local sky = Lighting:FindFirstChild("SkinChangerSky")
+		if preset.nome == "Padrao" then
+			if sky then sky:Destroy() end
+			return
+		end
+		if not sky or not sky:IsA("Sky") then
+			if sky then pcall(function() sky:Destroy() end) end
+			sky = Instance.new("Sky")
+			sky.Name = "SkinChangerSky"
+			sky.Parent = Lighting
+		end
+		sky.SkyboxBk = preset.Bk
+		sky.SkyboxDn = preset.Dn
+		sky.SkyboxFt = preset.Ft
+		sky.SkyboxLf = preset.Lf
+		sky.SkyboxRt = preset.Rt
+		sky.SkyboxUp = preset.Up
+	end
+
+	-- ================= HEADLESS / KORBLOX =================
+	local function AplicarHeadless(character)
+		local head = character:FindFirstChild("Head")
+		if not head then return end
+		head.Transparency = 1
+		head.CanCollide = false
+		local face = head:FindFirstChildOfClass("Decal")
+		if face then face:Destroy() end
+		for _, v in ipairs(head:GetChildren()) do
+			if v:IsA("SpecialMesh") or v:IsA("CharacterMesh") then v:Destroy() end
+		end
+		local mesh = Instance.new("SpecialMesh")
+		mesh.MeshType = Enum.MeshType.FileMesh
+		mesh.MeshId = "rbxassetid://1095708"
+		mesh.Scale = Vector3.new(0.001, 0.001, 0.001)
+		mesh.Parent = head
+	end
+
+	local function AplicarKorblox(character)
+		local rightLeg = character:FindFirstChild("Right Leg")
+		if not rightLeg then return end
+		for _, v in ipairs(rightLeg:GetChildren()) do
+			if v:IsA("SpecialMesh") or v:IsA("CharacterMesh") then v:Destroy() end
+		end
+		local mesh = Instance.new("SpecialMesh")
+		mesh.MeshType = Enum.MeshType.FileMesh
+		mesh.MeshId = "rbxassetid://101851696"
+		mesh.TextureId = "rbxassetid://101851254"
+		mesh.Scale = Vector3.new(1, 1, 1)
+		mesh.Parent = rightLeg
+	end
+
+	local function AplicarExtrasVisuais(character)
+		if not character then return end
+		if state.headlessAtivo then AplicarHeadless(character) end
+		if state.korbloxAtivo then AplicarKorblox(character) end
+	end
+
+	-- ================= TRACERS E IMPACTS (ESTILO CS2 SÓLIDO) =================
+	local Players = game:GetService("Players")
+	local LocalPlayer = Players.LocalPlayer
+	local Debris = game:GetService("Debris")
+	local TweenService = game:GetService("TweenService")
+
+	local tracerState = {
+		taserColor = Color3.fromRGB(0, 234, 255),
+		sniperColor = Color3.fromRGB(150, 150, 150),
+		bulletColor = Color3.fromRGB(255, 255, 0),
+		ativado = false,
+		fadeSuave = false,
+		material = Enum.Material.Neon,
+		grossura = 1,
+		transparencia = 0.5,
+		
+		bulletImpactAtivado = true,
+		-- Cor rosa sólida característica pedida
+		impactColor = Color3.fromRGB(255, 0, 127), 
+		impactTempo = 5, -- Fica visível por 5 segundos inteiros sem sumir aos poucos
+	}
+
+	local DURACAO_FADE = {
+		taser = 1.4,
+		sniper = 2.2,
+		bullet = 0.9,
+	}
+
+	local tracerConn = nil
+
+	local function Color3ToBrickColor(c3)
+		return BrickColor.new(c3.R, c3.G, c3.B)
+	end
+
+	local function AplicarCorTracer(rayPart, cor, temLight)
+		if not rayPart or not rayPart:IsA("BasePart") then return end
+		pcall(function()
+			rayPart.BrickColor = Color3ToBrickColor(cor)
+			rayPart.Color = cor
+		end)
+
+		pcall(function()
+			rayPart.Material = tracerState.material
+		end)
+
+		pcall(function()
+			rayPart.Transparency = tracerState.transparencia
+		end)
+
+		pcall(function()
+			local mult = tracerState.grossura or 1
+			rayPart.Size = Vector3.new(rayPart.Size.X * mult, rayPart.Size.Y * mult, rayPart.Size.Z)
+		end)
+
+		if temLight then
+			local light = rayPart:FindFirstChildOfClass("SurfaceLight")
+			if light then light.Color = cor end
+		end
+	end
+
+	local function IdentificarTipoRayPart(part)
+		local espessura = math.min(part.Size.X, part.Size.Y)
+		if math.abs(espessura - 0.2) < 0.02 then
+			return "taser"
+		elseif math.abs(espessura - 0.17) < 0.02 then
+			return "sniper"
+		elseif math.abs(espessura - 0.1) < 0.02 then
+			return "bullet"
+		end
+		return nil
+	end
+
+	local function ChecarSeMeuTiro(rayPart)
+		local char = LocalPlayer.Character
+		if not char or not char:FindFirstChild("HumanoidRootPart") then return true end
+		
+		local posInicial = rayPart.CFrame * CFrame.new(0, 0, rayPart.Size.Z / 2)
+		local distancia = (posInicial.Position - char.HumanoidRootPart.Position).Magnitude
+		
+		return distancia < 15
+	end
+
+	local function AplicarFadeSuave(rayPart, tipo)
+		local duracaoTotal = DURACAO_FADE[tipo] or 1.2
+		local tempoSegurando = duracaoTotal * 0.4
+		local tempoFade = duracaoTotal - tempoSegurando
+
+		local ok, clone = pcall(function() return rayPart:Clone() end)
+		if not ok or not clone then return end
+
+		clone.Anchored = true
+		clone.CanCollide = false
+		clone.CanQuery = false
+		clone.CanTouch = false
+		clone.Parent = rayPart.Parent
+
+		pcall(function() rayPart.Transparency = 1 end)
+		local luzOriginal = rayPart:FindFirstChildOfClass("SurfaceLight")
+		if luzOriginal then luzOriginal.Brightness = 0 end
+
+		task.delay(tempoSegurando, function()
+			if clone and clone.Parent then
+				TweenService:Create(clone, TweenInfo.new(tempoFade, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+					Transparency = 1,
+				}):Play()
+
+				local val = clone:FindFirstChildOfClass("SurfaceLight")
+				if val then
+					TweenService:Create(val, TweenInfo.new(tempoFade, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+						Brightness = 0,
+					}):Play()
+				end
+			end
+		end)
+
+		Debris:AddItem(clone, duracaoTotal + 0.15)
+	end
+
+	local function CriarBulletImpactCS2(rayPart)
+		if not tracerState.bulletImpactAtivado then return end
+
+		local posFinal = rayPart.CFrame * CFrame.new(0, 0, -rayPart.Size.Z / 2)
+
+		local anchorPart = Instance.new("Part")
+		anchorPart.Size = Vector3.new(0.05, 0.05, 0.05)
+		anchorPart.CFrame = posFinal
+		anchorPart.Anchored = true
+		anchorPart.CanCollide = false
+		anchorPart.CanQuery = false
+		anchorPart.CanTouch = false
+		anchorPart.Transparency = 1
+		anchorPart.Parent = workspace
+
+		local billboard = Instance.new("BillboardGui")
+		-- Tamanho compacto para o quadrado
+		billboard.Size = UDim2.new(0, 7, 0, 7)
+		billboard.AlwaysOnTop = true
+		billboard.Adornee = anchorPart
+		billboard.Parent = anchorPart
+
+		local square = Instance.new("Frame")
+		square.Size = UDim2.new(1, 0, 1, 0)
+		square.BackgroundColor3 = tracerState.impactColor
+		square.BackgroundTransparency = 0 -- Cor 100% sólida, sem transparência inicial
+		square.BorderSizePixel = 1
+		square.BorderColor3 = Color3.fromRGB(0, 0, 0) -- Borda preta para destacar bem
+		square.Parent = billboard
+
+		-- Remove o quadrado abruptamente após os segundos definidos (sem efeito de fade)
+		Debris:AddItem(anchorPart, tracerState.impactTempo)
+	end
+
+	local function ConectarNaCamera()
+		if tracerConn then
+			tracerConn:Disconnect()
+			tracerConn = nil
+		end
+		local camera = workspace.CurrentCamera
+		if not camera then return end
+		
+		tracerConn = camera.ChildAdded:Connect(function(child)
+			if child.Name ~= "RayPart" or not child:IsA("BasePart") then return end
+
+			if not ChecarSeMeuTiro(child) then return end
+
+			local tipo = IdentificarTipoRayPart(child)
+
+			if tipo == "taser" then
+				AplicarCorTracer(child, tracerState.taserColor, true)
+			elseif tipo == "sniper" then
+				AplicarCorTracer(child, tracerState.sniperColor, false)
+			elseif tipo == "bullet" then
+				AplicarCorTracer(child, tracerState.bulletColor, false)
+			end
+
+			if tipo and tracerState.fadeSuave then
+				AplicarFadeSuave(child, tipo)
+			end
+
+			if tipo then
+				CriarBulletImpactCS2(child)
+			end
+		end)
+	end
+
+	ConectarNaCamera()
+
+	-- ================= SCREEN GUI =================
+	GUI.Screen = Instance.new("ScreenGui")
+	GUI.Screen.Name = "SkinChangerMenu"
+	GUI.Screen.IgnoreGuiInset = true
+	GUI.Screen.ResetOnSpawn = false
+	GUI.Screen.Parent = player:WaitForChild("PlayerGui")
+
+	-- ================= MAIN CONTAINER =================
+	GUI.Main = Instance.new("Frame")
+	GUI.Main.Name = "Menu"
+	GUI.Main.AnchorPoint = Vector2.new(0.5, 0.5)
+	GUI.Main.Position = UDim2.new(0.5, 0, 0.5, 0)
+	GUI.Main.Size = UDim2.new(0, 560, 0, 440)
+	GUI.Main.BackgroundColor3 = Color3.fromRGB(27, 27, 27)
+	GUI.Main.BackgroundTransparency = 0.1
+	GUI.Main.BorderSizePixel = 0
+	GUI.Main.Parent = GUI.Screen
+
+	local mainCorner = Instance.new("UICorner")
+	mainCorner.CornerRadius = UDim.new(0, 16)
+	mainCorner.Parent = GUI.Main
+
+	do
+		local mainGlow = Instance.new("UIStroke")
+		mainGlow.Color = Color3.fromRGB(255, 105, 180)
+		mainGlow.Transparency = 0.82
+		mainGlow.Thickness = 2
+		mainGlow.Parent = GUI.Main
+	end
+
+	local mainStroke = Instance.new("UIStroke")
+	mainStroke.Color = Color3.fromRGB(255, 255, 255)
+	mainStroke.Transparency = 0.85
+	mainStroke.Thickness = 1
+	mainStroke.Parent = GUI.Main
+
+	local mainGradient = Instance.new("UIGradient")
+	mainGradient.Rotation = 90
+	mainGradient.Color = ColorSequence.new(Color3.fromRGB(60,60,60), Color3.fromRGB(15,15,15))
+	mainGradient.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.2),
+		NumberSequenceKeypoint.new(1, 0.5),
+	})
+	mainGradient.Parent = GUI.Main
+
+	-- ================= TITLE BAR =================
+	GUI.TitleBar = Instance.new("Frame")
+	GUI.TitleBar.Size = UDim2.new(1, 0, 0, 50)
+	GUI.TitleBar.BackgroundTransparency = 1
+	GUI.TitleBar.Parent = GUI.Main
+
+	GUI.Title = Instance.new("TextLabel")
+	GUI.Title.AnchorPoint = Vector2.new(0, 0.5)
+	GUI.Title.Position = UDim2.new(0, 20, 0.5, 0)
+	GUI.Title.Size = UDim2.new(1, -80, 0, 20)
+	GUI.Title.BackgroundTransparency = 1
+	GUI.Title.Text = "Skin Changer"
+	GUI.Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+	GUI.Title.TextXAlignment = Enum.TextXAlignment.Left
+	GUI.Title.TextSize = 20
+	GUI.Title.Font = Enum.Font.GothamBold
+	GUI.Title.Parent = GUI.TitleBar
+
+	GUI.CloseBtn = Instance.new("TextButton")
+	GUI.CloseBtn.AnchorPoint = Vector2.new(1, 0.5)
+	GUI.CloseBtn.Position = UDim2.new(1, -15, 0.5, 0)
+	GUI.CloseBtn.Size = UDim2.new(0, 30, 0, 30)
+	GUI.CloseBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	GUI.CloseBtn.BackgroundTransparency = 0.9
+	GUI.CloseBtn.Text = "X"
+	GUI.CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	GUI.CloseBtn.Font = Enum.Font.GothamBold
+	GUI.CloseBtn.TextSize = 14
+	GUI.CloseBtn.AutoButtonColor = false
+	GUI.CloseBtn.Parent = GUI.TitleBar
+	Instance.new("UICorner", GUI.CloseBtn).CornerRadius = UDim.new(0, 8)
+
+	local titleStroke = Instance.new("Frame")
+	titleStroke.Size = UDim2.new(1, 0, 0, 1)
+	titleStroke.Position = UDim2.new(0, 0, 1, 0)
+	titleStroke.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	titleStroke.BackgroundTransparency = 0.85
+	titleStroke.BorderSizePixel = 0
+	titleStroke.Parent = GUI.TitleBar
+
+	-- ================= TOPBAR =================
+	GUI.TopBar = Instance.new("Frame")
+	GUI.TopBar.Size = UDim2.new(1, -30, 0, 30)
+	GUI.TopBar.Position = UDim2.new(0.5, 0, 0, 58)
+	GUI.TopBar.AnchorPoint = Vector2.new(0.5, 0)
+	GUI.TopBar.BackgroundTransparency = 1
+	GUI.TopBar.Parent = GUI.Main
+
+	local topbarLayout = Instance.new("UIListLayout")
+	topbarLayout.FillDirection = Enum.FillDirection.Horizontal
+	topbarLayout.Padding = UDim.new(0, 2)
+	topbarLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	topbarLayout.Parent = GUI.TopBar
+
+	local function CreateTabButton(name, order)
+		local btn = Instance.new("TextButton")
+		btn.Name = name
+		btn.Size = UDim2.new(0, 48, 1, 0)
+		btn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		btn.BackgroundTransparency = 0.92
+		btn.Text = name
+		btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		btn.Font = Enum.Font.GothamBold
+		btn.TextSize = 10
+		btn.TextScaled = false
+		btn.AutoButtonColor = false
+		btn.LayoutOrder = order
+		btn.Parent = GUI.TopBar
+		Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+
+		local uiScale = Instance.new("UITextSizeConstraint")
+		uiScale.MaxTextSize = 10
+		uiScale.MinTextSize = 7
+		uiScale.Parent = btn
+		btn.TextScaled = true
+
+		return btn
+	end
+
+	local tabArmas = CreateTabButton("Armas", 1)
+	local tabCores = CreateTabButton("Cores", 2)
+	local tabDecal = CreateTabButton("Textura", 3)
+	local tabPartes = CreateTabButton("Partes", 4)
+	local tabAmbiente = CreateTabButton("Ambiente", 5)
+	local tabTracers = CreateTabButton("Tracers", 6)
+	local tabConfig = CreateTabButton("Config", 11)
+
+	local todasAsAbas = {
+		Armas = tabArmas, Cores = tabCores, Textura = tabDecal,
+		Partes = tabPartes, Ambiente = tabAmbiente, Config = tabConfig,
+		Tracers = tabTracers,
+	}
+	do
+		local tabSons = CreateTabButton("Sons", 7)
+		todasAsAbas.Sons = tabSons
+	end
+	do
+		local tabMeshes = CreateTabButton("Meshes", 8)
+		todasAsAbas.Meshes = tabMeshes
+	end
+	do
+		local tabMira = CreateTabButton("Mira", 9)
+		todasAsAbas.Mira = tabMira
+	end
+
+	local function AtualizarDestaqueAbas(tab)
+		for nome, btn in pairs(todasAsAbas) do
+			local ativa = (nome == tab)
+			if ativa then
+				btn.BackgroundColor3 = Color3.fromRGB(255, 105, 180)
+				btn.BackgroundTransparency = 0.35
+			else
+				btn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+				btn.BackgroundTransparency = 0.92
+			end
+			btn.TextColor3 = ativa and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(170, 170, 170)
+		end
+	end
+
+	-- ================= CONTENT HOLDERS =================
+	local function CreateHolder(visible)
+		local holder = Instance.new("ScrollingFrame")
+		holder.AnchorPoint = Vector2.new(0.5, 0)
+		holder.Position = UDim2.new(0.5, 0, 0, 96)
+		holder.Size = UDim2.new(1, -30, 1, -180)
+		holder.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		holder.BackgroundTransparency = 0.94
+		holder.BorderSizePixel = 0
+		holder.ScrollBarThickness = 4
+		holder.CanvasSize = UDim2.new(0, 0, 0, 0)
+		holder.Visible = visible
+		holder.Parent = GUI.Main
+		Instance.new("UICorner", holder).CornerRadius = UDim.new(0, 10)
+
+		local holderStroke = Instance.new("UIStroke")
+		holderStroke.Color = Color3.fromRGB(255, 255, 255)
+		holderStroke.Transparency = 0.92
+		holderStroke.Thickness = 1
+		holderStroke.Parent = holder
+
+		local layout = Instance.new("UIListLayout")
+		layout.Padding = UDim.new(0, 6)
+		layout.SortOrder = Enum.SortOrder.LayoutOrder
+		layout.Parent = holder
+
+		local padding = Instance.new("UIPadding")
+		padding.PaddingTop = UDim.new(0, 8)
+		padding.PaddingLeft = UDim.new(0, 8)
+		padding.PaddingRight = UDim.new(0, 8)
+		padding.PaddingBottom = UDim.new(0, 8)
+		padding.Parent = holder
+
+		ManageCanvas(holder, layout)
+
+		return holder
+	end
+
+	GUI.HolderArmas = CreateHolder(true)
+	GUI.HolderCores = CreateHolder(false)
+	GUI.HolderDecal = CreateHolder(false)
+	GUI.HolderPartes = CreateHolder(false)
+	GUI.HolderAmbiente = CreateHolder(false)
+	GUI.HolderConfig = CreateHolder(false)
+	GUI.HolderTracers = CreateHolder(false)
+	GUI.HolderSons = CreateHolder(false)
+	GUI.HolderMeshes = CreateHolder(false)
+	GUI.HolderMira = CreateHolder(false)
+
+	local function SwitchTab(tab)
+		GUI.HolderArmas.Visible = (tab == "Armas")
+		GUI.HolderCores.Visible = (tab == "Cores")
+		GUI.HolderDecal.Visible = (tab == "Textura")
+		GUI.HolderPartes.Visible = (tab == "Partes")
+		GUI.HolderAmbiente.Visible = (tab == "Ambiente")
+		GUI.HolderConfig.Visible = (tab == "Config")
+		GUI.HolderTracers.Visible = (tab == "Tracers")
+		GUI.HolderSons.Visible = (tab == "Sons")
+		GUI.HolderMeshes.Visible = (tab == "Meshes")
+		GUI.HolderMira.Visible = (tab == "Mira")
+		AtualizarDestaqueAbas(tab)
+	end
+
+	tabArmas.MouseButton1Click:Connect(function() SwitchTab("Armas") end)
+	tabCores.MouseButton1Click:Connect(function() SwitchTab("Cores") end)
+	tabDecal.MouseButton1Click:Connect(function() SwitchTab("Textura") end)
+	tabPartes.MouseButton1Click:Connect(function() SwitchTab("Partes") end)
+	tabAmbiente.MouseButton1Click:Connect(function() SwitchTab("Ambiente") end)
+	tabConfig.MouseButton1Click:Connect(function() SwitchTab("Config") end)
+	tabTracers.MouseButton1Click:Connect(function() SwitchTab("Tracers") end)
+	todasAsAbas.Sons.MouseButton1Click:Connect(function() SwitchTab("Sons") end)
+	todasAsAbas.Meshes.MouseButton1Click:Connect(function() SwitchTab("Meshes") end)
+	todasAsAbas.Mira.MouseButton1Click:Connect(function() SwitchTab("Mira") end)
+	AtualizarDestaqueAbas("Armas")
+
+	-- ================= HELPERS DE UI =================
+	local function CreateLabel(parent, text, order)
+		local lbl = Instance.new("TextLabel")
+		lbl.BackgroundTransparency = 1
+		lbl.Size = UDim2.new(1, 0, 0, 20)
+		lbl.Text = text
+		lbl.TextColor3 = Color3.fromRGB(220, 220, 220)
+		lbl.Font = Enum.Font.GothamBold
+		lbl.TextSize = 13
+		lbl.TextXAlignment = Enum.TextXAlignment.Left
+		lbl.LayoutOrder = order
+		lbl.Parent = parent
+		return lbl
+	end
+
+	local function CreateCheckbox(parent, name, order, getVal, setVal)
+		getVal = getVal or function() return armasAlvo[name] end
+		setVal = setVal or function(v) armasAlvo[name] = v end
+
+		local row = Instance.new("Frame")
+		row.Size = UDim2.new(1, 0, 0, 30)
+		row.BackgroundTransparency = 1
+		row.LayoutOrder = order
+		row.Parent = parent
+
+		local box = Instance.new("TextButton")
+		box.Size = UDim2.new(0, 20, 0, 20)
+		box.Position = UDim2.new(0, 0, 0.5, -10)
+		box.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		box.BackgroundTransparency = getVal() and 0.3 or 0.85
+		box.Text = ""
+		box.AutoButtonColor = false
+		box.Parent = row
+		Instance.new("UICorner", box).CornerRadius = UDim.new(0, 5)
+
+		local lbl = Instance.new("TextLabel")
+		lbl.BackgroundTransparency = 1
+		lbl.Position = UDim2.new(0, 30, 0, 0)
+		lbl.Size = UDim2.new(1, -30, 1, 0)
+		lbl.Text = name
+		lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+		lbl.Font = Enum.Font.Gotham
+		lbl.TextSize = 14
+		lbl.TextXAlignment = Enum.TextXAlignment.Left
+		lbl.Parent = row
+
+		box.MouseButton1Click:Connect(function()
+			local novoValor = not getVal()
+
+			-- setVal protegido com pcall: antes, se algo desse errado aqui dentro (ex: uma API
+			-- do Roblox falhando), o clique inteiro travava e o quadradinho nem mudava de cor -
+			-- parecia que o botão não fazia nada. Agora o erro só vira um warn no console e o
+			-- checkbox continua respondendo normalmente ao clique.
+			local ok, err = pcall(setVal, novoValor)
+			if not ok then
+				warn("[SkinChanger] Erro ao aplicar '" .. tostring(name) .. "': " .. tostring(err))
+			end
+
+			-- Relê getVal() em vez de confiar cegamente em novoValor: alguns setVal
+			-- (ex: o dos tracers, que depende de achar o módulo no ReplicatedStorage)
+			-- podem não conseguir aplicar a mudança. Sem isso, o checkbox ficava
+			-- pintado como "ligado" mesmo quando a ativação falhava por trás,
+			-- e o clique seguinte tentava ligar de novo em vez de desligar.
+			box.BackgroundTransparency = getVal() and 0.3 or 0.85
+		end)
+
+		return row
+	end
+
+	local function CreateTextInput(parent, placeholder, order)
+		local box = Instance.new("TextBox")
+		box.Size = UDim2.new(1, 0, 0, 32)
+		box.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		box.BackgroundTransparency = 0.9
+		box.PlaceholderText = placeholder
+		box.Text = ""
+		box.TextColor3 = Color3.fromRGB(255, 255, 255)
+		box.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+		box.Font = Enum.Font.Gotham
+		box.TextSize = 13
+		box.ClearTextOnFocus = false
+		box.LayoutOrder = order
+		box.Parent = parent
+		Instance.new("UICorner", box).CornerRadius = UDim.new(0, 8)
+		return box
+	end
+
+	local function CreateButton(parent, text, order)
+		local btn = Instance.new("TextButton")
+		btn.Size = UDim2.new(1, 0, 0, 36)
+		btn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		btn.BackgroundTransparency = 0.85
+		btn.Text = text
+		btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		btn.Font = Enum.Font.GothamBold
+		btn.TextSize = 14
+		btn.AutoButtonColor = false
+		btn.LayoutOrder = order
+		btn.Parent = parent
+		Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+		return btn
+	end
+
+	local function AtualizarLabelArma(lbl, name)
+		if skinsPorArma[name] then
+			lbl.Text = name .. " - skin propria salva"
+			lbl.TextColor3 = Color3.fromRGB(120, 220, 140)
+		else
+			lbl.Text = name .. " - usando skin global"
+			lbl.TextColor3 = Color3.fromRGB(150, 150, 150)
+		end
+	end
+
+	local function SalvarSkinNaArma(name)
+		skinsPorArma[name] = {
+			color = state.color, decalId = state.decalId, material = state.material,
+			removerTextura = state.removerTextura, metodoTextura = state.metodoTextura,
+			texturaTransparencia = state.texturaTransparencia, parteTransparencia = state.parteTransparencia,
+		}
+	end
+
+	local function LimparSkinDaArma(name) skinsPorArma[name] = nil end
+
+	local function CreateArmaRow(parent, name, order)
+		local row = Instance.new("Frame")
+		row.Size = UDim2.new(1, 0, 0, 54)
+		row.BackgroundTransparency = 1
+		row.LayoutOrder = order
+		row.Parent = parent
+
+		local box = Instance.new("TextButton")
+		box.Size = UDim2.new(0, 20, 0, 20)
+		box.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		box.BackgroundTransparency = armasAlvo[name] and 0.3 or 0.85
+		box.Text = ""
+		box.AutoButtonColor = false
+		box.Parent = row
+		Instance.new("UICorner", box).CornerRadius = UDim.new(0, 5)
+
+		box.MouseButton1Click:Connect(function()
+			local v = not armasAlvo[name]
+			armasAlvo[name] = v
+			box.BackgroundTransparency = v and 0.3 or 0.85
+		end)
+
+		local nameLbl = Instance.new("TextLabel")
+		nameLbl.BackgroundTransparency = 1
+		nameLbl.Position = UDim2.new(0, 30, 0, -2)
+		nameLbl.Size = UDim2.new(1, -30, 0, 20)
+		nameLbl.Font = Enum.Font.Gotham
+		nameLbl.TextSize = 13
+		nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+		nameLbl.Parent = row
+		AtualizarLabelArma(nameLbl, name)
+
+		local salvarBtn = Instance.new("TextButton")
+		salvarBtn.Size = UDim2.new(0.5, -34, 0, 22)
+		salvarBtn.Position = UDim2.new(0, 30, 0, 24)
+		salvarBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		salvarBtn.BackgroundTransparency = 0.85
+		salvarBtn.Text = "Salvar skin atual aqui"
+		salvarBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		salvarBtn.Font = Enum.Font.Gotham
+		salvarBtn.TextSize = 11
+		salvarBtn.AutoButtonColor = false
+		salvarBtn.Parent = row
+		Instance.new("UICorner", salvarBtn).CornerRadius = UDim.new(0, 6)
+
+		local limparBtn = Instance.new("TextButton")
+		limparBtn.Size = UDim2.new(0.5, -34, 0, 22)
+		limparBtn.Position = UDim2.new(0.5, 4, 0, 24)
+		limparBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		limparBtn.BackgroundTransparency = 0.92
+		limparBtn.Text = "Usar skin global"
+		limparBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
+		limparBtn.Font = Enum.Font.Gotham
+		limparBtn.TextSize = 11
+		limparBtn.AutoButtonColor = false
+		limparBtn.Parent = row
+		Instance.new("UICorner", limparBtn).CornerRadius = UDim.new(0, 6)
+
+		salvarBtn.MouseButton1Click:Connect(function()
+			SalvarSkinNaArma(name)
+			AtualizarLabelArma(nameLbl, name)
+			GUI:Notify("Skin Changer", "Skin salva para '"..name.."'.", 4)
+		end)
+
+		limparBtn.MouseButton1Click:Connect(function()
+			LimparSkinDaArma(name)
+			AtualizarLabelArma(nameLbl, name)
+			GUI:Notify("Skin Changer", "'"..name.."' voltou a usar skin global.", 3)
+		end)
+
+		return row
+	end
+
+	-- ================= ABA: ARMAS =================
+	CreateLabel(GUI.HolderArmas, "Selecione as armas alvo:", 1)
+	local dica = CreateLabel(GUI.HolderArmas, "Ajuste cor/textura nas abas Cores/Textura, depois salve na arma.", 2)
+	dica.TextWrapped = true
+	dica.TextColor3 = Color3.fromRGB(160, 160, 160)
+	dica.Font = Enum.Font.Gotham
+	dica.TextSize = 12
+	dica.Size = UDim2.new(1, 0, 0, 34)
+
+	local listaArmasPadrao = { "FAL", "M700", "Revolver", "AK-47", "M4A1", "Remington 870", "MP5", "M9", "Riot Shield", "Taser" }
+	-- Usado la embaixo pelo HUD Fofo, pra saber se a Tool na mao e uma arma DE VERDADE do
+	-- jogo (e nao qualquer outra Tool que o jogo possa dar, tipo item, chave, etc).
+	local armasDoJogoSet = {}
+	for _, name in ipairs(listaArmasPadrao) do armasDoJogoSet[name] = true end
+	for i, name in ipairs(listaArmasPadrao) do
+		CreateArmaRow(GUI.HolderArmas, name, i + 2)
+	end
+
+	local customNameBox = CreateTextInput(GUI.HolderArmas, "Adicionar arma pelo nome...", 20)
+	local addBtn = CreateButton(GUI.HolderArmas, "+ Adicionar arma a lista", 21)
+	local proximaOrdemArma = 22
+	local armasJaListadas = {}
+	for _, name in ipairs(listaArmasPadrao) do armasJaListadas[name] = true end
+
+	addBtn.MouseButton1Click:Connect(function()
+		local name = customNameBox.Text
+		if not name or name == "" then return end
+		if armasJaListadas[name] then
+			GUI:Notify("Skin Changer", "'"..name.."' ja esta na lista.", 3)
+			customNameBox.Text = ""
+			return
+		end
+		armasAlvo[name] = true
+		armasJaListadas[name] = true
+		CreateArmaRow(GUI.HolderArmas, name, proximaOrdemArma)
+		proximaOrdemArma = proximaOrdemArma + 1
+		customNameBox.Text = ""
+		GUI:Notify("Skin Changer", "Arma '"..name.."' adicionada.", 3)
+	end)
+
+	-- ================= ABA: CORES =================
+	CreateLabel(GUI.HolderCores, "Ajuste a cor da skin:", 1)
+
+	local preview = Instance.new("Frame")
+	preview.Size = UDim2.new(1, 0, 0, 50)
+	preview.BackgroundColor3 = state.color
+	preview.LayoutOrder = 2
+	preview.Parent = GUI.HolderCores
+	Instance.new("UICorner", preview).CornerRadius = UDim.new(0, 8)
+
+	local function CreateSlider(parent, labelText, defaultVal, order, onChange)
+		local container = Instance.new("Frame")
+		container.Size = UDim2.new(1, 0, 0, 45)
+		container.BackgroundTransparency = 1
+		container.LayoutOrder = order
+		container.Parent = parent
+
+		local label = Instance.new("TextLabel")
+		label.BackgroundTransparency = 1
+		label.Size = UDim2.new(1, 0, 0, 16)
+		label.Text = labelText .. ": " .. tostring(defaultVal)
+		label.TextColor3 = Color3.fromRGB(220, 220, 220)
+		label.Font = Enum.Font.Gotham
+		label.TextSize = 12
+		label.TextXAlignment = Enum.TextXAlignment.Left
+		label.Parent = container
+
+		local track = Instance.new("Frame")
+		track.Position = UDim2.new(0, 0, 0, 22)
+		track.Size = UDim2.new(1, 0, 0, 8)
+		track.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		track.BackgroundTransparency = 0.85
+		track.Parent = container
+		Instance.new("UICorner", track).CornerRadius = UDim.new(1, 0)
+
+		local fill = Instance.new("Frame")
+		fill.Size = UDim2.new(defaultVal / 255, 0, 1, 0)
+		fill.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		fill.BackgroundTransparency = 0.2
+		fill.Parent = track
+		Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+
+		local dragging = false
+		local function update(inputPos)
+			local relX = math.clamp((inputPos.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+			fill.Size = UDim2.new(relX, 0, 1, 0)
+			local val = math.floor(relX * 255)
+			label.Text = labelText .. ": " .. tostring(val)
+			onChange(val)
+		end
+
+		track.InputBegan:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+				dragging = true; update(input.Position)
+			end
+		end)
+		track.InputEnded:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+				dragging = false
+			end
+		end)
+		UserInputService.InputChanged:Connect(function(input)
+			if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+				update(input.Position)
+			end
+		end)
+
+		local function setValue(val)
+			val = math.clamp(val, 0, 255)
+			fill.Size = UDim2.new(val / 255, 0, 1, 0)
+			label.Text = labelText .. ": " .. tostring(math.floor(val))
+		end
+		return container, setValue
+	end
+
+	local function CreateRangeSlider(parent, labelText, minVal, maxVal, defaultVal, decimais, order, onChange)
+		decimais = decimais or 0
+		local casas = 10 ^ decimais
+		local function formatar(v)
+			if decimais > 0 then return string.format("%." .. decimais .. "f", v) end
+			return tostring(math.floor(v))
+		end
+
+		local container = Instance.new("Frame")
+		container.Size = UDim2.new(1, 0, 0, 45)
+		container.BackgroundTransparency = 1
+		container.LayoutOrder = order
+		container.Parent = parent
+
+		local label = Instance.new("TextLabel")
+		label.BackgroundTransparency = 1
+		label.Size = UDim2.new(1, 0, 0, 16)
+		label.Text = labelText .. ": " .. formatar(defaultVal)
+		label.TextColor3 = Color3.fromRGB(220, 220, 220)
+		label.Font = Enum.Font.Gotham
+		label.TextSize = 12
+		label.TextXAlignment = Enum.TextXAlignment.Left
+		label.Parent = container
+
+		local track = Instance.new("Frame")
+		track.Position = UDim2.new(0, 0, 0, 22)
+		track.Size = UDim2.new(1, 0, 0, 8)
+		track.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		track.BackgroundTransparency = 0.85
+		track.Parent = container
+		Instance.new("UICorner", track).CornerRadius = UDim.new(1, 0)
+
+		local relDefault = math.clamp((defaultVal - minVal) / (maxVal - minVal), 0, 1)
+		local fill = Instance.new("Frame")
+		fill.Size = UDim2.new(relDefault, 0, 1, 0)
+		fill.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		fill.BackgroundTransparency = 0.2
+		fill.Parent = track
+		Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+
+		local dragging = false
+		local function update(inputPos)
+			local relX = math.clamp((inputPos.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+			fill.Size = UDim2.new(relX, 0, 1, 0)
+			local val = minVal + relX * (maxVal - minVal)
+			val = math.floor(val * casas + 0.5) / casas
+			label.Text = labelText .. ": " .. formatar(val)
+			onChange(val)
+		end
+
+		track.InputBegan:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+				dragging = true; update(input.Position)
+			end
+		end)
+		track.InputEnded:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+				dragging = false
+			end
+		end)
+		UserInputService.InputChanged:Connect(function(input)
+			if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+				update(input.Position)
+			end
+		end)
+
+		local function setValue(val)
+			val = math.clamp(val, minVal, maxVal)
+			local relX = (maxVal > minVal) and ((val - minVal) / (maxVal - minVal)) or 0
+			fill.Size = UDim2.new(relX, 0, 1, 0)
+			label.Text = labelText .. ": " .. formatar(val)
+		end
+		return container, setValue
+	end
+
+	local hue, sat, val = state.color:ToHSV()
+
+	local function AtualizarCorAtual()
+		state.color = Color3.fromHSV(hue, sat, val)
+		preview.BackgroundColor3 = state.color
+	end
+
+	local svContainer = Instance.new("Frame")
+	svContainer.Size = UDim2.new(1, 0, 0, 150)
+	svContainer.LayoutOrder = 3
+	svContainer.BackgroundColor3 = Color3.fromHSV(hue, 1, 1)
+	svContainer.BorderSizePixel = 0
+	svContainer.ClipsDescendants = true
+	svContainer.Parent = GUI.HolderCores
+	Instance.new("UICorner", svContainer).CornerRadius = UDim.new(0, 8)
+
+	local svWhiteOverlay = Instance.new("Frame")
+	svWhiteOverlay.Size = UDim2.new(1, 0, 1, 0)
+	svWhiteOverlay.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	svWhiteOverlay.BorderSizePixel = 0
+	svWhiteOverlay.ZIndex = 2
+	svWhiteOverlay.Parent = svContainer
+	local svWG = Instance.new("UIGradient")
+	svWG.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 1) })
+	svWG.Parent = svWhiteOverlay
+
+	local svBlackOverlay = Instance.new("Frame")
+	svBlackOverlay.Size = UDim2.new(1, 0, 1, 0)
+	svBlackOverlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	svBlackOverlay.BorderSizePixel = 0
+	svBlackOverlay.ZIndex = 3
+	svBlackOverlay.Parent = svContainer
+	local svBG = Instance.new("UIGradient")
+	svBG.Rotation = 90
+	svBG.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(1, 0) })
+	svBG.Parent = svBlackOverlay
+
+	local svIndicador = Instance.new("Frame")
+	svIndicador.Size = UDim2.new(0, 14, 0, 14)
+	svIndicador.AnchorPoint = Vector2.new(0.5, 0.5)
+	svIndicador.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	svIndicador.BorderSizePixel = 0
+	svIndicador.ZIndex = 5
+	svIndicador.Parent = svContainer
+	Instance.new("UICorner", svIndicador).CornerRadius = UDim.new(1, 0)
+	local svIS = Instance.new("UIStroke")
+	svIS.Color = Color3.fromRGB(0, 0, 0); svIS.Thickness = 1.5; svIS.Parent = svIndicador
+
+	local function AtualizarIndicadorSV()
+		svIndicador.Position = UDim2.new(sat, 0, 1 - val, 0)
+	end
+	AtualizarIndicadorSV()
+
+	local hueBar = Instance.new("Frame")
+	hueBar.Size = UDim2.new(1, 0, 0, 20)
+	hueBar.LayoutOrder = 4
+	hueBar.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	hueBar.BorderSizePixel = 0
+	hueBar.Parent = GUI.HolderCores
+	Instance.new("UICorner", hueBar).CornerRadius = UDim.new(0, 8)
+
+	local hueGradient = Instance.new("UIGradient")
+	hueGradient.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0.000, Color3.fromRGB(255, 0, 0)),
+		ColorSequenceKeypoint.new(0.166, Color3.fromRGB(255, 255, 0)),
+		ColorSequenceKeypoint.new(0.333, Color3.fromRGB(0, 255, 0)),
+		ColorSequenceKeypoint.new(0.500, Color3.fromRGB(0, 255, 255)),
+		ColorSequenceKeypoint.new(0.666, Color3.fromRGB(0, 0, 255)),
+		ColorSequenceKeypoint.new(0.833, Color3.fromRGB(255, 0, 255)),
+		ColorSequenceKeypoint.new(1.000, Color3.fromRGB(255, 0, 0)),
+	})
+	hueGradient.Parent = hueBar
+
+	local hueIndicador = Instance.new("Frame")
+	hueIndicador.Size = UDim2.new(0, 6, 1, 4)
+	hueIndicador.AnchorPoint = Vector2.new(0.5, 0.5)
+	hueIndicador.Position = UDim2.new(hue, 0, 0.5, 0)
+	hueIndicador.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	hueIndicador.BorderSizePixel = 0
+	hueIndicador.ZIndex = 5
+	hueIndicador.Parent = hueBar
+	Instance.new("UICorner", hueIndicador).CornerRadius = UDim.new(0, 3)
+	local hueIS = Instance.new("UIStroke")
+	hueIS.Color = Color3.fromRGB(0, 0, 0); hueIS.Thickness = 1.5; hueIS.Parent = hueIndicador
+
+	local hexBox = CreateTextInput(GUI.HolderCores, "Ou digite um HEX (ex: FF69B4)", 5)
+
+	local function AtualizarHexBox()
+		hexBox.Text = string.format("%02X%02X%02X",
+			math.floor(state.color.R * 255 + 0.5),
+			math.floor(state.color.G * 255 + 0.5),
+			math.floor(state.color.B * 255 + 0.5))
+	end
+	AtualizarHexBox()
+
+	local arrastandoSV = false
+	local function AtualizarSVPorInput(inputPos)
+		local relX = math.clamp((inputPos.X - svContainer.AbsolutePosition.X) / svContainer.AbsoluteSize.X, 0, 1)
+		local relY = math.clamp((inputPos.Y - svContainer.AbsolutePosition.Y) / svContainer.AbsoluteSize.Y, 0, 1)
+		sat = relX; val = 1 - relY
+		AtualizarIndicadorSV(); AtualizarCorAtual(); AtualizarHexBox()
+	end
+
+	svContainer.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			arrastandoSV = true; AtualizarSVPorInput(input.Position)
+		end
+	end)
+	svContainer.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			arrastandoSV = false
+		end
+	end)
+
+	local arrastandoHue = false
+	local function AtualizarHuePorInput(inputPos)
+		local relX = math.clamp((inputPos.X - hueBar.AbsolutePosition.X) / hueBar.AbsoluteSize.X, 0, 1)
+		hue = relX
+		hueIndicador.Position = UDim2.new(hue, 0, 0.5, 0)
+		svContainer.BackgroundColor3 = Color3.fromHSV(hue, 1, 1)
+		AtualizarCorAtual(); AtualizarHexBox()
+	end
+
+	hueBar.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			arrastandoHue = true; AtualizarHuePorInput(input.Position)
+		end
+	end)
+	hueBar.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			arrastandoHue = false
+		end
+	end)
+
+	UserInputService.InputChanged:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+			if arrastandoSV then AtualizarSVPorInput(input.Position)
+			elseif arrastandoHue then AtualizarHuePorInput(input.Position) end
+		end
+	end)
+
+	hexBox.FocusLost:Connect(function(enterPressed)
+		if enterPressed and hexBox.Text ~= "" then
+			local color = SafeHex(hexBox.Text)
+			if color then
+				hue, sat, val = color:ToHSV()
+				svContainer.BackgroundColor3 = Color3.fromHSV(hue, 1, 1)
+				hueIndicador.Position = UDim2.new(hue, 0, 0.5, 0)
+				AtualizarIndicadorSV(); AtualizarCorAtual()
+				GUI:Notify("Skin Changer", "Cor atualizada via HEX.", 2)
+			else
+				GUI:Notify("Skin Changer", "HEX invalido.", 2)
+				AtualizarHexBox()
+			end
+		end
+	end)
+
+	-- ================= ABA: TEXTURA =================
+	CreateLabel(GUI.HolderDecal, "ID da textura (rbxassetid://ID ou so o numero):", 1)
+	local decalBox = CreateTextInput(GUI.HolderDecal, "rbxassetid://0000000", 2)
+
+	decalBox.FocusLost:Connect(function()
+		local texto = decalBox.Text
+		if texto ~= "" and not texto:match("^rbxassetid://") then
+			local num = texto:match("(%d+)")
+			if num then
+				texto = "rbxassetid://" .. num
+				decalBox.Text = texto
+			end
+		end
+		state.decalId = texto
+		if GUI.TexturaPreviewImg then
+			GUI.TexturaPreviewImg.Image = texto
+			GUI.TexturaPreviewLbl.Visible = (texto == "")
+		end
+		if texto ~= "" then
+			GUI:Notify("Skin Changer", "Textura definida: " .. texto, 2)
+		end
+	end)
+
+	CreateLabel(GUI.HolderDecal, "Metodo de aplicacao:", 3)
+
+	local methodRow = Instance.new("Frame")
+	methodRow.Size = UDim2.new(1, 0, 0, 32)
+	methodRow.BackgroundTransparency = 1
+	methodRow.LayoutOrder = 4
+	methodRow.Parent = GUI.HolderDecal
+	local methodLayout = Instance.new("UIListLayout")
+	methodLayout.FillDirection = Enum.FillDirection.Horizontal
+	methodLayout.Padding = UDim.new(0, 8)
+	methodLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	methodLayout.Parent = methodRow
+
+	local function CreateMethodButton(text, value)
+		local btn = Instance.new("TextButton")
+		btn.Size = UDim2.new(0.5, -4, 1, 0)
+		btn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		btn.BackgroundTransparency = (state.metodoTextura == value) and 0.3 or 0.88
+		btn.Text = text
+		btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		btn.Font = Enum.Font.GothamBold
+		btn.TextSize = 12
+		btn.AutoButtonColor = false
+		btn.Parent = methodRow
+		Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+		return btn
+	end
+
+	local btnDecalMethod = CreateMethodButton("Decal (overlay)", "Decal")
+	local btnMeshMethod = CreateMethodButton("Substituir Mesh", "MeshDireto")
+
+	local function AtualizarBotoesMetodo()
+		btnDecalMethod.BackgroundTransparency = (state.metodoTextura == "Decal") and 0.3 or 0.88
+		btnMeshMethod.BackgroundTransparency = (state.metodoTextura == "MeshDireto") and 0.3 or 0.88
+	end
+
+	btnDecalMethod.MouseButton1Click:Connect(function() state.metodoTextura = "Decal"; AtualizarBotoesMetodo() end)
+	btnMeshMethod.MouseButton1Click:Connect(function() state.metodoTextura = "MeshDireto"; AtualizarBotoesMetodo() end)
+
+	CreateLabel(GUI.HolderDecal, "- Decal: cobre as 6 faces da part.", 5)
+	CreateLabel(GUI.HolderDecal, "- Mesh: troca textura direto na mesh.", 6)
+
+	CreateSlider(GUI.HolderDecal, "Transparencia da textura", 0, 7, function(v)
+		state.texturaTransparencia = v / 255
+	end)
+
+	CreateSlider(GUI.HolderDecal, "Transparencia da arma (peca)", 0, 8, function(v)
+		state.parteTransparencia = v / 255
+	end)
+
+	CreateCheckbox(GUI.HolderDecal, "Remover textura antiga antes de aplicar", 10,
+		function() return state.removerTextura end,
+		function(v) state.removerTextura = v end
+	)
+
+	CreateLabel(GUI.HolderDecal, "Material da arma:", 12)
+
+	local materiaisDisponiveis = {
+		{ nome = "Plastico Liso", valor = Enum.Material.SmoothPlastic },
+		{ nome = "Plastico", valor = Enum.Material.Plastic },
+		{ nome = "Metal", valor = Enum.Material.Metal },
+		{ nome = "Metal Corroido", valor = Enum.Material.CorrodedMetal },
+		{ nome = "Metal Diamantado", valor = Enum.Material.DiamondPlate },
+		{ nome = "Madeira", valor = Enum.Material.Wood },
+		{ nome = "Madeira Envelhecida", valor = Enum.Material.WoodPlanks },
+		{ nome = "Neon", valor = Enum.Material.Neon },
+		{ nome = "Vidro", valor = Enum.Material.Glass },
+		{ nome = "Campo de Forca", valor = Enum.Material.ForceField },
+		{ nome = "Granito", valor = Enum.Material.Granite },
+		{ nome = "Marmore", valor = Enum.Material.Marble },
+		{ nome = "Concreto", valor = Enum.Material.Concrete },
+		{ nome = "Borracha", valor = Enum.Material.Rubber },
+		{ nome = "Camurca", valor = Enum.Material.Slate },
+		{ nome = "Metal Fosco", valor = Enum.Material.Foil },
+		{ nome = "Gelo", valor = Enum.Material.Ice },
+		{ nome = "Rocha", valor = Enum.Material.Rock },
+		{ nome = "Pedregulho", valor = Enum.Material.Pebble },
+		{ nome = "Paralelepipedo", valor = Enum.Material.Cobblestone },
+		{ nome = "Tijolo", valor = Enum.Material.Brick },
+		{ nome = "Basalto", valor = Enum.Material.Basalt },
+		{ nome = "Ardosia", valor = Enum.Material.Slate },
+		{ nome = "Arenito", valor = Enum.Material.Sandstone },
+		{ nome = "Areia", valor = Enum.Material.Sand },
+		{ nome = "Tecido", valor = Enum.Material.Fabric },
+		{ nome = "Couro", valor = Enum.Material.Leather },
+		{ nome = "Calcada (Pavimento)", valor = Enum.Material.Pavement },
+		{ nome = "Grama", valor = Enum.Material.Grass },
+		{ nome = "Lama", valor = Enum.Material.Mud },
+		{ nome = "Neve", valor = Enum.Material.Snow },
+		{ nome = "Sal", valor = Enum.Material.Salt },
+		{ nome = "Lava Rachada", valor = Enum.Material.CrackedLava },
+		{ nome = "Geleira", valor = Enum.Material.Glacier },
+		{ nome = "Asfalto", valor = Enum.Material.Asphalt },
+		{ nome = "Calcario", valor = Enum.Material.Limestone },
+	}
+
+	local materialIndexAtual = 1
+	for i, m in ipairs(materiaisDisponiveis) do
+		if m.valor == state.material then materialIndexAtual = i; break end
+	end
+
+	local materialRow = Instance.new("Frame")
+	materialRow.Size = UDim2.new(1, 0, 0, 32)
+	materialRow.BackgroundTransparency = 1
+	materialRow.LayoutOrder = 13
+	materialRow.Parent = GUI.HolderDecal
+	local matLayout = Instance.new("UIListLayout")
+	matLayout.FillDirection = Enum.FillDirection.Horizontal
+	matLayout.Padding = UDim.new(0, 8)
+	matLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	matLayout.Parent = materialRow
+
+	local materialPrevBtn = Instance.new("TextButton")
+	materialPrevBtn.Size = UDim2.new(0, 36, 1, 0)
+	materialPrevBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	materialPrevBtn.BackgroundTransparency = 0.85
+	materialPrevBtn.Text = "<"
+	materialPrevBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	materialPrevBtn.Font = Enum.Font.GothamBold
+	materialPrevBtn.TextSize = 16
+	materialPrevBtn.AutoButtonColor = false
+	materialPrevBtn.Parent = materialRow
+	Instance.new("UICorner", materialPrevBtn).CornerRadius = UDim.new(0, 8)
+
+	local materialLabel = Instance.new("TextLabel")
+	materialLabel.Size = UDim2.new(1, -88, 1, 0)
+	materialLabel.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	materialLabel.BackgroundTransparency = 0.92
+	materialLabel.Text = materiaisDisponiveis[materialIndexAtual].nome
+	materialLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	materialLabel.Font = Enum.Font.GothamBold
+	materialLabel.TextSize = 13
+	materialLabel.Parent = materialRow
+	Instance.new("UICorner", materialLabel).CornerRadius = UDim.new(0, 8)
+
+	local materialNextBtn = Instance.new("TextButton")
+	materialNextBtn.Size = UDim2.new(0, 36, 1, 0)
+	materialNextBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	materialNextBtn.BackgroundTransparency = 0.85
+	materialNextBtn.Text = ">"
+	materialNextBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	materialNextBtn.Font = Enum.Font.GothamBold
+	materialNextBtn.TextSize = 16
+	materialNextBtn.AutoButtonColor = false
+	materialNextBtn.Parent = materialRow
+	Instance.new("UICorner", materialNextBtn).CornerRadius = UDim.new(0, 8)
+
+	local function AtualizarMaterialSelecionado()
+		state.material = materiaisDisponiveis[materialIndexAtual].valor
+		materialLabel.Text = materiaisDisponiveis[materialIndexAtual].nome
+		if GUI.MaterialPreviewPart then
+			GUI.MaterialPreviewPart.Material = state.material
+		end
+		if GUI.MaterialPreviewLbl then
+			GUI.MaterialPreviewLbl.Text = materiaisDisponiveis[materialIndexAtual].nome
+		end
+	end
+
+	materialPrevBtn.MouseButton1Click:Connect(function()
+		materialIndexAtual = materialIndexAtual - 1
+		if materialIndexAtual < 1 then materialIndexAtual = #materiaisDisponiveis end
+		AtualizarMaterialSelecionado()
+	end)
+	materialNextBtn.MouseButton1Click:Connect(function()
+		materialIndexAtual = materialIndexAtual + 1
+		if materialIndexAtual > #materiaisDisponiveis then materialIndexAtual = 1 end
+		AtualizarMaterialSelecionado()
+	end)
+
+	-- ================= PREVIEW VISUAL (textura + material) =================
+	-- Envolvido em do...end pra essas variaveis nao contarem pro limite de 200 locais.
+	do
+		CreateLabel(GUI.HolderDecal, "Preview:", 14)
+
+		local previewRow = Instance.new("Frame")
+		previewRow.Size = UDim2.new(1, 0, 0, 70)
+		previewRow.BackgroundTransparency = 1
+		previewRow.LayoutOrder = 15
+		previewRow.Parent = GUI.HolderDecal
+		local previewLayout = Instance.new("UIListLayout")
+		previewLayout.FillDirection = Enum.FillDirection.Horizontal
+		previewLayout.Padding = UDim.new(0, 10)
+		previewLayout.Parent = previewRow
+
+		-- ----- Preview da textura/decal -----
+		local texturaPreviewBox = Instance.new("Frame")
+		texturaPreviewBox.Size = UDim2.new(0, 70, 0, 70)
+		texturaPreviewBox.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		texturaPreviewBox.BackgroundTransparency = 0.92
+		texturaPreviewBox.Parent = previewRow
+		Instance.new("UICorner", texturaPreviewBox).CornerRadius = UDim.new(0, 10)
+		local texturaPreviewStroke = Instance.new("UIStroke")
+		texturaPreviewStroke.Color = Color3.fromRGB(255, 255, 255)
+		texturaPreviewStroke.Transparency = 0.85
+		texturaPreviewStroke.Parent = texturaPreviewBox
+
+		GUI.TexturaPreviewImg = Instance.new("ImageLabel")
+		GUI.TexturaPreviewImg.Size = UDim2.new(1, -10, 1, -10)
+		GUI.TexturaPreviewImg.Position = UDim2.new(0, 5, 0, 5)
+		GUI.TexturaPreviewImg.BackgroundTransparency = 1
+		GUI.TexturaPreviewImg.ScaleType = Enum.ScaleType.Fit
+		GUI.TexturaPreviewImg.Image = state.decalId ~= "" and state.decalId or ""
+		GUI.TexturaPreviewImg.Parent = texturaPreviewBox
+
+		local texturaPreviewLbl = Instance.new("TextLabel")
+		texturaPreviewLbl.Size = UDim2.new(1, 0, 1, 0)
+		texturaPreviewLbl.BackgroundTransparency = 1
+		texturaPreviewLbl.Text = "sem\ntextura"
+		texturaPreviewLbl.TextColor3 = Color3.fromRGB(150, 150, 150)
+		texturaPreviewLbl.Font = Enum.Font.Gotham
+		texturaPreviewLbl.TextSize = 10
+		texturaPreviewLbl.Visible = (state.decalId == "")
+		texturaPreviewLbl.Parent = texturaPreviewBox
+		GUI.TexturaPreviewLbl = texturaPreviewLbl
+
+		-- ----- Preview do material (viewport 3D com uma peca de verdade) -----
+		local materialPreviewBox = Instance.new("ViewportFrame")
+		materialPreviewBox.Size = UDim2.new(0, 70, 0, 70)
+		materialPreviewBox.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		materialPreviewBox.BackgroundTransparency = 0.92
+		materialPreviewBox.Parent = previewRow
+		Instance.new("UICorner", materialPreviewBox).CornerRadius = UDim.new(0, 10)
+		local materialPreviewStroke = Instance.new("UIStroke")
+		materialPreviewStroke.Color = Color3.fromRGB(255, 255, 255)
+		materialPreviewStroke.Transparency = 0.85
+		materialPreviewStroke.Parent = materialPreviewBox
+
+		local previewCam = Instance.new("Camera")
+		previewCam.Parent = materialPreviewBox
+		materialPreviewBox.CurrentCamera = previewCam
+
+		GUI.MaterialPreviewPart = Instance.new("Part")
+		GUI.MaterialPreviewPart.Size = Vector3.new(2.2, 2.2, 2.2)
+		GUI.MaterialPreviewPart.Anchored = true
+		GUI.MaterialPreviewPart.Material = state.material
+		GUI.MaterialPreviewPart.Color = Color3.fromRGB(190, 190, 190)
+		GUI.MaterialPreviewPart.Parent = materialPreviewBox
+
+		previewCam.CFrame = CFrame.new(Vector3.new(2.6, 2.2, 2.6), GUI.MaterialPreviewPart.Position)
+
+		local materialPreviewLbl = Instance.new("TextLabel")
+		materialPreviewLbl.AnchorPoint = Vector2.new(0.5, 1)
+		materialPreviewLbl.Position = UDim2.new(0.5, 0, 1, -2)
+		materialPreviewLbl.Size = UDim2.new(1, 0, 0, 14)
+		materialPreviewLbl.BackgroundTransparency = 1
+		materialPreviewLbl.Text = materiaisDisponiveis[materialIndexAtual].nome
+		materialPreviewLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+		materialPreviewLbl.Font = Enum.Font.GothamBold
+		materialPreviewLbl.TextSize = 10
+		materialPreviewLbl.TextStrokeTransparency = 0.5
+		materialPreviewLbl.Parent = materialPreviewBox
+		GUI.MaterialPreviewLbl = materialPreviewLbl
+
+		-- gira devagar pra dar pra ver o material de varios angulos
+		GUI.MaterialPreviewConn = RunService.Heartbeat:Connect(function(dt)
+			if not GUI.MaterialPreviewPart or not GUI.MaterialPreviewPart.Parent then return end
+			GUI.MaterialPreviewAngulo = (GUI.MaterialPreviewAngulo or 0) + dt * 0.6
+			local raio = 3.6
+			local x = math.cos(GUI.MaterialPreviewAngulo) * raio
+			local z = math.sin(GUI.MaterialPreviewAngulo) * raio
+			previewCam.CFrame = CFrame.new(Vector3.new(x, 2.2, z), GUI.MaterialPreviewPart.Position)
+		end)
+	end
+
+	-- ================= ESCANEAR ARMAS =================
+	CreateLabel(GUI.HolderArmas, "Escanear partes especificas de uma arma:", 500)
+	local scanBtn = CreateButton(GUI.HolderArmas, "Escanear Armas (mochila/maos)", 501)
+
+	GUI.ToolsListFrame = Instance.new("Frame")
+	GUI.ToolsListFrame.BackgroundTransparency = 1
+	GUI.ToolsListFrame.Size = UDim2.new(1, 0, 0, 0)
+	GUI.ToolsListFrame.LayoutOrder = 502
+	GUI.ToolsListFrame.Parent = GUI.HolderArmas
+	local toolsListLayout = Instance.new("UIListLayout")
+	toolsListLayout.Padding = UDim.new(0, 4)
+	toolsListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	toolsListLayout.Parent = GUI.ToolsListFrame
+	ManageSizeFromLayout(GUI.ToolsListFrame, toolsListLayout)
+
+	-- ================= ABA: PARTES =================
+	GUI.ArmaInspecionadaLabel = Instance.new("TextLabel")
+	GUI.ArmaInspecionadaLabel.BackgroundTransparency = 1
+	GUI.ArmaInspecionadaLabel.Size = UDim2.new(1, 0, 0, 18)
+	GUI.ArmaInspecionadaLabel.Text = "Nenhuma arma inspecionada. Va em Armas > Escanear."
+	GUI.ArmaInspecionadaLabel.TextColor3 = Color3.fromRGB(160, 200, 255)
+	GUI.ArmaInspecionadaLabel.Font = Enum.Font.GothamBold
+	GUI.ArmaInspecionadaLabel.TextSize = 12
+	GUI.ArmaInspecionadaLabel.TextWrapped = true
+	GUI.ArmaInspecionadaLabel.TextXAlignment = Enum.TextXAlignment.Left
+	GUI.ArmaInspecionadaLabel.LayoutOrder = 1
+	GUI.ArmaInspecionadaLabel.Parent = GUI.HolderPartes
+
+	CreateLabel(GUI.HolderPartes, "Marque as partes que recebem a skin:", 2)
+	local buscaPartesBox = CreateTextInput(GUI.HolderPartes, "Filtrar partes pelo nome...", 3)
+
+	local partesBtnRow = Instance.new("Frame")
+	partesBtnRow.Size = UDim2.new(1, 0, 0, 32)
+	partesBtnRow.BackgroundTransparency = 1
+	partesBtnRow.LayoutOrder = 4
+	partesBtnRow.Parent = GUI.HolderPartes
+	local pBtnLayout = Instance.new("UIListLayout")
+	pBtnLayout.FillDirection = Enum.FillDirection.Horizontal
+	pBtnLayout.Padding = UDim.new(0, 8)
+	pBtnLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	pBtnLayout.Parent = partesBtnRow
+
+	local function CreateSmallButton(parent, text)
+		local btn = Instance.new("TextButton")
+		btn.Size = UDim2.new(0.5, -4, 1, 0)
+		btn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		btn.BackgroundTransparency = 0.85
+		btn.Text = text
+		btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		btn.Font = Enum.Font.GothamBold
+		btn.TextSize = 12
+		btn.AutoButtonColor = false
+		btn.Parent = parent
+		Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+		return btn
+	end
+
+	local marcarTodasBtn = CreateSmallButton(partesBtnRow, "Marcar todas")
+	local desmarcarTodasBtn = CreateSmallButton(partesBtnRow, "Limpar selecao")
+
+	GUI.PartesListFrame = Instance.new("Frame")
+	GUI.PartesListFrame.BackgroundTransparency = 1
+	GUI.PartesListFrame.Size = UDim2.new(1, 0, 0, 0)
+	GUI.PartesListFrame.LayoutOrder = 5
+	GUI.PartesListFrame.Parent = GUI.HolderPartes
+	local partesListLayout = Instance.new("UIListLayout")
+	partesListLayout.Padding = UDim.new(0, 4)
+	partesListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	partesListLayout.Parent = GUI.PartesListFrame
+	ManageSizeFromLayout(GUI.PartesListFrame, partesListLayout)
+
+	local partesCheckboxRefs = {}
+
+	local function LimparListaPartes()
+		for _, child in ipairs(GUI.PartesListFrame:GetChildren()) do
+			if child:IsA("Frame") then child:Destroy() end
+		end
+		partesCheckboxRefs = {}
+	end
+
+	local function CreatePartCheckbox(name, order)
+		local row = Instance.new("Frame")
+		row.Size = UDim2.new(1, 0, 0, 26)
+		row.BackgroundTransparency = 1
+		row.LayoutOrder = order
+		row.Parent = GUI.PartesListFrame
+
+		local box = Instance.new("TextButton")
+		box.Size = UDim2.new(0, 18, 0, 18)
+		box.Position = UDim2.new(0, 0, 0.5, -9)
+		box.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		box.BackgroundTransparency = 0.85
+		box.Text = ""
+		box.AutoButtonColor = false
+		box.Parent = row
+		Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)
+
+		local lbl = Instance.new("TextLabel")
+		lbl.BackgroundTransparency = 1
+		lbl.Position = UDim2.new(0, 26, 0, 0)
+		lbl.Size = UDim2.new(1, -26, 1, 0)
+		lbl.Text = name
+		lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+		lbl.Font = Enum.Font.Gotham
+		lbl.TextSize = 13
+		lbl.TextXAlignment = Enum.TextXAlignment.Left
+		lbl.Parent = row
+
+		box.MouseButton1Click:Connect(function()
+			if partesSelecionadas[name] then
+				partesSelecionadas[name] = nil
+				box.BackgroundTransparency = 0.85
+			else
+				partesSelecionadas[name] = true
+				box.BackgroundTransparency = 0.3
+			end
+		end)
+		partesCheckboxRefs[name] = { row = row, box = box }
+	end
+
+	marcarTodasBtn.MouseButton1Click:Connect(function()
+		for name, refs in pairs(partesCheckboxRefs) do
+			partesSelecionadas[name] = true
+			refs.box.BackgroundTransparency = 0.3
+		end
+		GUI:Notify("Skin Changer", "Todas marcadas.", 2)
+	end)
+
+	desmarcarTodasBtn.MouseButton1Click:Connect(function()
+		partesSelecionadas = {}
+		for _, refs in pairs(partesCheckboxRefs) do
+			refs.box.BackgroundTransparency = 0.85
+		end
+		GUI:Notify("Skin Changer", "Selecao limpa.", 2)
+	end)
+
+	buscaPartesBox:GetPropertyChangedSignal("Text"):Connect(function()
+		local termo = buscaPartesBox.Text:lower()
+		for name, refs in pairs(partesCheckboxRefs) do
+			refs.row.Visible = (termo == "") or (name:lower():find(termo, 1, true) ~= nil)
+		end
+	end)
+
+	local function EncontrarTodasAsTools()
+		local tools = {}
+		local backpack = player:FindFirstChild("Backpack")
+		local character = player.Character
+		if character then
+			for _, item in ipairs(character:GetChildren()) do
+				if item:IsA("Tool") then table.insert(tools, item) end
+			end
+		end
+		if backpack then
+			for _, item in ipairs(backpack:GetChildren()) do
+				if item:IsA("Tool") then table.insert(tools, item) end
+			end
+		end
+		return tools
+	end
+
+	local function CarregarPartesDaTool(tool)
+		toolInspecionada = tool.Name
+		partesSelecionadas = {}
+		buscaPartesBox.Text = ""
+		LimparListaPartes()
+		local order = 1
+		for _, objeto in ipairs(tool:GetDescendants()) do
+			if objeto:IsA("BasePart") or objeto:IsA("SpecialMesh") or objeto:IsA("MeshPart") then
+				CreatePartCheckbox(objeto.Name, order)
+				order = order + 1
+			end
+		end
+		GUI.ArmaInspecionadaLabel.Text = "Arma: " .. tool.Name .. " (" .. (order - 1) .. " partes)"
+		GUI:Notify("Skin Changer", "Partes de '"..tool.Name.."' carregadas.", 3)
+		SwitchTab("Partes")
+	end
+
+	local function LimparListaTools()
+		for _, child in ipairs(GUI.ToolsListFrame:GetChildren()) do
+			if child:IsA("TextButton") then child:Destroy() end
+		end
+	end
+
+	local function CreateToolButton(tool, order)
+		local btn = Instance.new("TextButton")
+		btn.Size = UDim2.new(1, 0, 0, 32)
+		btn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		btn.BackgroundTransparency = 0.88
+		btn.Text = "  " .. tool.Name
+		btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		btn.Font = Enum.Font.Gotham
+		btn.TextSize = 13
+		btn.TextXAlignment = Enum.TextXAlignment.Left
+		btn.AutoButtonColor = false
+		btn.LayoutOrder = order
+		btn.Parent = GUI.ToolsListFrame
+		Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+		local p = Instance.new("UIPadding"); p.PaddingLeft = UDim.new(0, 10); p.Parent = btn
+		btn.MouseButton1Click:Connect(function() CarregarPartesDaTool(tool) end)
+	end
+
+	scanBtn.MouseButton1Click:Connect(function()
+		LimparListaTools()
+		local tools = EncontrarTodasAsTools()
+		if #tools == 0 then
+			GUI:Notify("Skin Changer", "Nenhuma arma encontrada.", 3)
+			return
+		end
+		for i, tool in ipairs(tools) do CreateToolButton(tool, i) end
+		GUI:Notify("Skin Changer", #tools .. " arma(s) encontrada(s).", 3)
+	end)
+
+	-- ================= ABA: SONS =================
+	-- Escaneia AUTOMATICAMENTE (sem precisar clicar em nada) todos os Sounds dentro de cada Tool
+	-- da mochila/maos, ignorando armas que nao tem nenhum Sound. Deixa trocar cada som pelo AssetId
+	-- desejado. Fica salvo em sonsPorArma[nomeDaTool][nomeDoSound] e e reaplicado toda vez que a
+	-- skin e aplicada (junto com cor/textura).
+	-- Envolvido em do...end pra essas variaveis descartaveis nao contarem pro limite de locais.
+	do
+		local sonsPorArma = {}
+		GUI.SonsPorArma = sonsPorArma
+
+		CreateLabel(GUI.HolderSons, "Armas com som detectadas (atualiza sozinho):", 1)
+
+		GUI.ArmaSonsInspecionadaLabel = Instance.new("TextLabel")
+		GUI.ArmaSonsInspecionadaLabel.BackgroundTransparency = 1
+		GUI.ArmaSonsInspecionadaLabel.Size = UDim2.new(1, 0, 0, 18)
+		GUI.ArmaSonsInspecionadaLabel.Text = "Escaneando..."
+		GUI.ArmaSonsInspecionadaLabel.TextColor3 = Color3.fromRGB(160, 200, 255)
+		GUI.ArmaSonsInspecionadaLabel.Font = Enum.Font.GothamBold
+		GUI.ArmaSonsInspecionadaLabel.TextSize = 12
+		GUI.ArmaSonsInspecionadaLabel.TextWrapped = true
+		GUI.ArmaSonsInspecionadaLabel.TextXAlignment = Enum.TextXAlignment.Left
+		GUI.ArmaSonsInspecionadaLabel.LayoutOrder = 2
+		GUI.ArmaSonsInspecionadaLabel.Parent = GUI.HolderSons
+
+		GUI.ToolsListFrameSons = Instance.new("Frame")
+		GUI.ToolsListFrameSons.BackgroundTransparency = 1
+		GUI.ToolsListFrameSons.Size = UDim2.new(1, 0, 0, 0)
+		GUI.ToolsListFrameSons.LayoutOrder = 3
+		GUI.ToolsListFrameSons.Parent = GUI.HolderSons
+		local toolsListSonsLayout = Instance.new("UIListLayout")
+		toolsListSonsLayout.Padding = UDim.new(0, 4)
+		toolsListSonsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+		toolsListSonsLayout.Parent = GUI.ToolsListFrameSons
+		ManageSizeFromLayout(GUI.ToolsListFrameSons, toolsListSonsLayout)
+
+		GUI.SonsListFrame = Instance.new("Frame")
+		GUI.SonsListFrame.BackgroundTransparency = 1
+		GUI.SonsListFrame.Size = UDim2.new(1, 0, 0, 0)
+		GUI.SonsListFrame.LayoutOrder = 4
+		GUI.SonsListFrame.Parent = GUI.HolderSons
+		local sonsListLayout = Instance.new("UIListLayout")
+		sonsListLayout.Padding = UDim.new(0, 6)
+		sonsListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+		sonsListLayout.Parent = GUI.SonsListFrame
+		ManageSizeFromLayout(GUI.SonsListFrame, sonsListLayout)
+
+		local function LimparListaSons()
+			for _, child in ipairs(GUI.SonsListFrame:GetChildren()) do
+				if child:IsA("Frame") then child:Destroy() end
+			end
+		end
+
+		local function EncontrarSoundsDaTool(tool)
+			local sounds = {}
+			for _, objeto in ipairs(tool:GetDescendants()) do
+				if objeto:IsA("Sound") then table.insert(sounds, objeto) end
+			end
+			return sounds
+		end
+
+		local function CreateSomRow(toolName, soundName, soundIdOriginal, order)
+			local row = Instance.new("Frame")
+			row.Size = UDim2.new(1, 0, 0, 50)
+			row.BackgroundTransparency = 1
+			row.LayoutOrder = order
+			row.Parent = GUI.SonsListFrame
+
+			local lbl = Instance.new("TextLabel")
+			lbl.BackgroundTransparency = 1
+			lbl.Size = UDim2.new(1, 0, 0, 16)
+			lbl.Text = soundName .. "  (original: " .. tostring(soundIdOriginal) .. ")"
+			lbl.TextColor3 = Color3.fromRGB(220, 220, 220)
+			lbl.Font = Enum.Font.GothamBold
+			lbl.TextSize = 12
+			lbl.TextXAlignment = Enum.TextXAlignment.Left
+			lbl.TextTruncate = Enum.TextTruncate.AtEnd
+			lbl.Parent = row
+
+			local box = Instance.new("TextBox")
+			box.Position = UDim2.new(0, 0, 0, 20)
+			box.Size = UDim2.new(1, 0, 0, 28)
+			box.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+			box.BackgroundTransparency = 0.9
+			box.PlaceholderText = "Novo ID (rbxassetid://... ou so o numero)"
+			box.Text = (sonsPorArma[toolName] and sonsPorArma[toolName][soundName]) or ""
+			box.TextColor3 = Color3.fromRGB(255, 255, 255)
+			box.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+			box.Font = Enum.Font.Gotham
+			box.TextSize = 12
+			box.ClearTextOnFocus = false
+			box.Parent = row
+			Instance.new("UICorner", box).CornerRadius = UDim.new(0, 6)
+
+			box.FocusLost:Connect(function()
+				local texto = box.Text
+				if texto ~= "" and not texto:match("^rbxassetid://") then
+					local apenasNumeros = texto:match("(%d+)")
+					if apenasNumeros then
+						texto = "rbxassetid://" .. apenasNumeros
+						box.Text = texto
+					end
+				end
+				sonsPorArma[toolName] = sonsPorArma[toolName] or {}
+				if texto == "" then
+					sonsPorArma[toolName][soundName] = nil
+					GUI:Notify("Sons", "ID removido de '"..soundName.."'. Aperte Aplicar Skin pra atualizar.", 3)
+				else
+					sonsPorArma[toolName][soundName] = texto
+					GUI:Notify("Sons", "Novo ID salvo pra '"..soundName.."'. Aperte Aplicar Skin pra aplicar.", 3)
+				end
+			end)
+		end
+
+		local function CarregarSonsDaTool(tool)
+			LimparListaSons()
+			local sounds = EncontrarSoundsDaTool(tool)
+			for i, sound in ipairs(sounds) do
+				CreateSomRow(tool.Name, sound.Name, sound.SoundId, i)
+			end
+			GUI.ArmaSonsInspecionadaLabel.Text = "Mostrando: " .. tool.Name .. " (" .. #sounds .. " som(ns))"
+		end
+
+		local function LimparListaToolsSons()
+			for _, child in ipairs(GUI.ToolsListFrameSons:GetChildren()) do
+				if child:IsA("TextButton") then child:Destroy() end
+			end
+		end
+
+		local function CreateToolButtonSons(tool, order)
+			local btn = Instance.new("TextButton")
+			btn.Size = UDim2.new(1, 0, 0, 32)
+			btn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+			btn.BackgroundTransparency = 0.88
+			btn.Text = "  " .. tool.Name
+			btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+			btn.Font = Enum.Font.Gotham
+			btn.TextSize = 13
+			btn.TextXAlignment = Enum.TextXAlignment.Left
+			btn.AutoButtonColor = false
+			btn.LayoutOrder = order
+			btn.Parent = GUI.ToolsListFrameSons
+			Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+			local p = Instance.new("UIPadding"); p.PaddingLeft = UDim.new(0, 10); p.Parent = btn
+			btn.MouseButton1Click:Connect(function() CarregarSonsDaTool(tool) end)
+		end
+
+		-- Reescaneia a mochila/maos e repopula a lista, pulando armas sem nenhum Sound.
+		-- Chamada sozinha (sem precisar clicar em nada): no load, e sempre que uma Tool
+		-- entra/sai da mochila ou das maos.
+		local ultimaToolMostrada = nil
+		local function AtualizarListaArmasSons()
+			LimparListaToolsSons()
+			local tools = EncontrarTodasAsTools()
+			local comSom = {}
+			for _, tool in ipairs(tools) do
+				if #EncontrarSoundsDaTool(tool) > 0 then
+					table.insert(comSom, tool)
+				end
+			end
+
+			if #comSom == 0 then
+				GUI.ArmaSonsInspecionadaLabel.Text = "Nenhuma arma com som na mochila/maos no momento."
+				LimparListaSons()
+				ultimaToolMostrada = nil
+				return
+			end
+
+			for i, tool in ipairs(comSom) do
+				CreateToolButtonSons(tool, i)
+			end
+
+			-- Mostra automaticamente os sons da primeira arma com som (ou continua mostrando
+			-- a mesma, se ela ainda estiver na lista) - assim nem precisa clicar em nada.
+			local toolParaMostrar = comSom[1]
+			if ultimaToolMostrada then
+				for _, tool in ipairs(comSom) do
+					if tool.Name == ultimaToolMostrada then
+						toolParaMostrar = tool
+						break
+					end
+				end
+			end
+			ultimaToolMostrada = toolParaMostrar.Name
+			CarregarSonsDaTool(toolParaMostrar)
+		end
+
+		AtualizarListaArmasSons()
+
+		local backpackInicial = player:FindFirstChild("Backpack")
+		if backpackInicial then
+			backpackInicial.ChildAdded:Connect(AtualizarListaArmasSons)
+			backpackInicial.ChildRemoved:Connect(AtualizarListaArmasSons)
+		end
+		if player.Character then
+			player.Character.ChildAdded:Connect(AtualizarListaArmasSons)
+			player.Character.ChildRemoved:Connect(AtualizarListaArmasSons)
+		end
+		player.CharacterAdded:Connect(function(character)
+			character.ChildAdded:Connect(AtualizarListaArmasSons)
+			character.ChildRemoved:Connect(AtualizarListaArmasSons)
+			task.wait(1)
+			AtualizarListaArmasSons()
+		end)
+
+		-- Global (nao conta pro limite de locais) pra poder ser chamada de dentro de
+		-- aplicarSkinNaArma, la embaixo na "LOGICA DE SKIN". Retorna quantos sons foram
+		-- realmente trocados (pra dar notificacao certa em vez de falhar em silencio).
+		function AplicarSonsNaArma(tool)
+			local mapaSons = sonsPorArma[tool.Name]
+			if not mapaSons then return 0, false end
+			local trocados = 0
+			for _, objeto in ipairs(tool:GetDescendants()) do
+				if objeto:IsA("Sound") and mapaSons[objeto.Name] then
+					local ok, err = pcall(function()
+						objeto.SoundId = mapaSons[objeto.Name]
+					end)
+					if ok then
+						trocados = trocados + 1
+					else
+						warn("[SkinChanger] Falha ao trocar som '"..objeto.Name.."' em '"..tool.Name.."': "..tostring(err))
+					end
+				end
+			end
+			return trocados, true
+		end
+	end
+
+	-- ================= ABA: SONS - KILLSOUNDS =================
+	-- UI pra ligar/desligar, ajustar volume e trocar o AssetId de cada som de killstreak
+	-- (estilo Quake/UT). A tabela de verdade e a "sonsKillstreak" la em cima (fora de
+	-- do...end), compartilhada com o detector de kills la embaixo (bloco KILLFEED) - editar
+	-- aqui ja reflete direto no que toca quando voce mata.
+	-- Envolvido em do...end pra essas variaveis descartaveis nao contarem pro limite de locais.
+	do
+		local SoundServiceKS = game:GetService("SoundService")
+
+		local function TocarSomTeste(assetId)
+			if not assetId or assetId == "" then
+				GUI:Notify("Killsounds", "Esse aqui ainda nao tem ID configurado.", 3)
+				return
+			end
+			local som = Instance.new("Sound")
+			som.SoundId = assetId
+			som.Volume = state.killsoundsVolume or 1
+			som.Parent = SoundServiceKS
+			som:Play()
+			game:GetService("Debris"):AddItem(som, 6)
+		end
+
+		CreateLabel(GUI.HolderSons, "Killsounds (kill streak):", 5)
+
+		CreateCheckbox(GUI.HolderSons, "Ativar killsounds", 6,
+			function() return state.killsoundsAtivo end,
+			function(v) state.killsoundsAtivo = v end)
+
+		local _, setSliderVolumeKS = CreateRangeSlider(GUI.HolderSons, "Volume", 0, 1, 1, 2, 7, function(v)
+			state.killsoundsVolume = v
+		end)
+
+		local function CreateKillsomRow(chave, nome, order)
+			local row = Instance.new("Frame")
+			row.Size = UDim2.new(1, 0, 0, 50)
+			row.BackgroundTransparency = 1
+			row.LayoutOrder = order
+			row.Parent = GUI.HolderSons
+
+			local lbl = Instance.new("TextLabel")
+			lbl.BackgroundTransparency = 1
+			lbl.Size = UDim2.new(1, 0, 0, 16)
+			lbl.Text = nome
+			lbl.TextColor3 = Color3.fromRGB(220, 220, 220)
+			lbl.Font = Enum.Font.GothamBold
+			lbl.TextSize = 12
+			lbl.TextXAlignment = Enum.TextXAlignment.Left
+			lbl.Parent = row
+
+			local box = Instance.new("TextBox")
+			box.Position = UDim2.new(0, 0, 0, 20)
+			box.Size = UDim2.new(1, -78, 0, 28)
+			box.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+			box.BackgroundTransparency = 0.9
+			box.PlaceholderText = "rbxassetid://..."
+			box.Text = tostring(sonsKillstreak[chave] or "")
+			box.TextColor3 = Color3.fromRGB(255, 255, 255)
+			box.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+			box.Font = Enum.Font.Gotham
+			box.TextSize = 12
+			box.ClearTextOnFocus = false
+			box.Parent = row
+			Instance.new("UICorner", box).CornerRadius = UDim.new(0, 6)
+
+			local btnTestar = Instance.new("TextButton")
+			btnTestar.Position = UDim2.new(1, -70, 0, 20)
+			btnTestar.Size = UDim2.new(0, 70, 0, 28)
+			btnTestar.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+			btnTestar.BackgroundTransparency = 0.85
+			btnTestar.Text = "Testar"
+			btnTestar.TextColor3 = Color3.fromRGB(255, 255, 255)
+			btnTestar.Font = Enum.Font.GothamBold
+			btnTestar.TextSize = 12
+			btnTestar.Parent = row
+			Instance.new("UICorner", btnTestar).CornerRadius = UDim.new(0, 6)
+
+			box.FocusLost:Connect(function()
+				local texto = box.Text
+				if texto ~= "" and not texto:match("^rbxassetid://") then
+					local apenasNumeros = texto:match("(%d+)")
+					if apenasNumeros then
+						texto = "rbxassetid://" .. apenasNumeros
+						box.Text = texto
+					end
+				end
+				if texto == "" then
+					sonsKillstreak[chave] = nil
+					GUI:Notify("Killsounds", "ID removido de '"..nome.."'.", 2)
+				else
+					sonsKillstreak[chave] = texto
+					GUI:Notify("Killsounds", "Novo ID salvo pra '"..nome.."'.", 2)
+				end
+			end)
+
+			btnTestar.MouseButton1Click:Connect(function()
+				TocarSomTeste(sonsKillstreak[chave])
+			end)
+		end
+
+		local killsoundsLista = {
+			{ grupo = "Multi-kill (kills seguidas em pouco tempo, sem morrer no meio)" },
+			{ chave = "duplo", nome = "Double Kill" },
+			{ chave = "triplo", nome = "Triple Kill" },
+			{ chave = "multi", nome = "Multi Kill" },
+			{ chave = "mega", nome = "Mega Kill" },
+			{ chave = "ultra", nome = "Ultra Kill" },
+			{ chave = "monstro", nome = "Monster Kill" },
+			{ chave = "ludicro", nome = "Ludicrous Kill" },
+			{ chave = "absurdo", nome = "Wicked Sick" },
+			{ grupo = "Spree (kills seguidas sem morrer, sem limite de tempo)" },
+			{ chave = "primeiroSangue", nome = "First Blood" },
+			{ chave = "spree", nome = "Killing Spree" },
+			{ chave = "rampage", nome = "Rampage" },
+			{ chave = "dominando", nome = "Dominating" },
+			{ chave = "imparavel", nome = "Unstoppable" },
+			{ chave = "deus", nome = "Godlike" },
+			{ grupo = "Guardados (sem gatilho automatico ainda - so pra testar/ter o ID pronto)" },
+			{ chave = "perfeito", nome = "Perfect" },
+			{ chave = "impressive", nome = "Impressive" },
+			{ chave = "hatTrick", nome = "Hat Trick" },
+			{ chave = "negado", nome = "Denied" },
+			{ chave = "destruidor", nome = "Wrecker" },
+		}
+
+		local ordem = 8
+		for _, item in ipairs(killsoundsLista) do
+			if item.grupo then
+				CreateLabel(GUI.HolderSons, item.grupo, ordem)
+			else
+				CreateKillsomRow(item.chave, item.nome, ordem)
+			end
+			ordem = ordem + 1
+		end
+	end
+
+	-- ================= ABA: SONS - SOM DE KILL (TODA KILL, SEM DEPENDER DE STREAK) =================
+	-- Diferente da secao de Killsounds acima (que so toca em double/triple/spree/etc): isso aqui
+	-- toca em QUALQUER kill sua, sempre, com um unico som. Fica em state.somDeKillId/Ativo/Volume
+	-- (nao precisa de tabela compartilhada porque e so um valor, e state ja e exportado/importado
+	-- inteiro pelo loadout).
+	-- Envolvido em do...end pra essas variaveis descartaveis nao contarem pro limite de locais.
+	do
+		local SoundServiceSK = game:GetService("SoundService")
+
+		local function TocarSomDeKillTeste()
+			if not state.somDeKillId or state.somDeKillId == "" then
+				GUI:Notify("Som de kill", "Configura um ID antes de testar.", 3)
+				return
+			end
+			local som = Instance.new("Sound")
+			som.SoundId = state.somDeKillId
+			som.Volume = state.somDeKillVolume or 1
+			som.Parent = SoundServiceSK
+			som:Play()
+			game:GetService("Debris"):AddItem(som, 6)
+		end
+
+		CreateLabel(GUI.HolderSons, "Som de kill (toca em TODA kill, nao depende de streak):", 200)
+
+		CreateCheckbox(GUI.HolderSons, "Ativar som de kill", 201,
+			function() return state.somDeKillAtivo end,
+			function(v) state.somDeKillAtivo = v end)
+
+		CreateRangeSlider(GUI.HolderSons, "Volume", 0, 1, 1, 2, 202, function(v)
+			state.somDeKillVolume = v
+		end)
+
+		local row = Instance.new("Frame")
+		row.Size = UDim2.new(1, 0, 0, 50)
+		row.BackgroundTransparency = 1
+		row.LayoutOrder = 203
+		row.Parent = GUI.HolderSons
+
+		local box = Instance.new("TextBox")
+		box.Size = UDim2.new(1, -78, 0, 32)
+		box.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		box.BackgroundTransparency = 0.9
+		box.PlaceholderText = "rbxassetid://... (som que toca em toda kill)"
+		box.Text = state.somDeKillId or ""
+		box.TextColor3 = Color3.fromRGB(255, 255, 255)
+		box.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+		box.Font = Enum.Font.Gotham
+		box.TextSize = 12
+		box.ClearTextOnFocus = false
+		box.Parent = row
+		Instance.new("UICorner", box).CornerRadius = UDim.new(0, 6)
+
+		local btnTestarSK = Instance.new("TextButton")
+		btnTestarSK.Position = UDim2.new(1, -70, 0, 0)
+		btnTestarSK.Size = UDim2.new(0, 70, 0, 32)
+		btnTestarSK.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		btnTestarSK.BackgroundTransparency = 0.85
+		btnTestarSK.Text = "Testar"
+		btnTestarSK.TextColor3 = Color3.fromRGB(255, 255, 255)
+		btnTestarSK.Font = Enum.Font.GothamBold
+		btnTestarSK.TextSize = 12
+		btnTestarSK.Parent = row
+		Instance.new("UICorner", btnTestarSK).CornerRadius = UDim.new(0, 6)
+
+		box.FocusLost:Connect(function()
+			local texto = box.Text
+			if texto ~= "" and not texto:match("^rbxassetid://") then
+				local apenasNumeros = texto:match("(%d+)")
+				if apenasNumeros then
+					texto = "rbxassetid://" .. apenasNumeros
+					box.Text = texto
+				end
+			end
+			state.somDeKillId = texto
+			GUI:Notify("Som de kill", texto == "" and "ID removido." or "Novo ID salvo.", 2)
+		end)
+
+		btnTestarSK.MouseButton1Click:Connect(TocarSomDeKillTeste)
+	end
+
+	-- ================= ABA: MESHES =================
+	do
+		local meshesPorArma = {}
+		GUI.MeshesPorArma = meshesPorArma
+
+		CreateLabel(GUI.HolderMeshes, "Meshes detectadas nas armas (atualiza sozinho):", 1)
+
+		GUI.ArmaMeshesInspecionadaLabel = Instance.new("TextLabel")
+		GUI.ArmaMeshesInspecionadaLabel.BackgroundTransparency = 1
+		GUI.ArmaMeshesInspecionadaLabel.Size = UDim2.new(1, 0, 0, 18)
+		GUI.ArmaMeshesInspecionadaLabel.Text = "Escaneando..."
+		GUI.ArmaMeshesInspecionadaLabel.TextColor3 = Color3.fromRGB(160, 200, 255)
+		GUI.ArmaMeshesInspecionadaLabel.Font = Enum.Font.GothamBold
+		GUI.ArmaMeshesInspecionadaLabel.TextSize = 12
+		GUI.ArmaMeshesInspecionadaLabel.TextWrapped = true
+		GUI.ArmaMeshesInspecionadaLabel.TextXAlignment = Enum.TextXAlignment.Left
+		GUI.ArmaMeshesInspecionadaLabel.LayoutOrder = 2
+		GUI.ArmaMeshesInspecionadaLabel.Parent = GUI.HolderMeshes
+
+		GUI.ToolsListFrameMeshes = Instance.new("Frame")
+		GUI.ToolsListFrameMeshes.BackgroundTransparency = 1
+		GUI.ToolsListFrameMeshes.Size = UDim2.new(1, 0, 0, 0)
+		GUI.ToolsListFrameMeshes.LayoutOrder = 3
+		GUI.ToolsListFrameMeshes.Parent = GUI.HolderMeshes
+		local toolsListMeshesLayout = Instance.new("UIListLayout")
+		toolsListMeshesLayout.Padding = UDim.new(0, 4)
+		toolsListMeshesLayout.SortOrder = Enum.SortOrder.LayoutOrder
+		toolsListMeshesLayout.Parent = GUI.ToolsListFrameMeshes
+		ManageSizeFromLayout(GUI.ToolsListFrameMeshes, toolsListMeshesLayout)
+
+		GUI.MeshesListFrame = Instance.new("Frame")
+		GUI.MeshesListFrame.BackgroundTransparency = 1
+		GUI.MeshesListFrame.Size = UDim2.new(1, 0, 0, 0)
+		GUI.MeshesListFrame.LayoutOrder = 4
+		GUI.MeshesListFrame.Parent = GUI.HolderMeshes
+		local meshesListLayout = Instance.new("UIListLayout")
+		meshesListLayout.Padding = UDim.new(0, 6)
+		meshesListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+		meshesListLayout.Parent = GUI.MeshesListFrame
+		ManageSizeFromLayout(GUI.MeshesListFrame, meshesListLayout)
+
+		local function LimparListaMeshes()
+			for _, child in ipairs(GUI.MeshesListFrame:GetChildren()) do
+				if child:IsA("Frame") then child:Destroy() end
+			end
+		end
+
+		local function EncontrarMeshesDaTool(tool)
+			local meshes = {}
+			for _, objeto in ipairs(tool:GetDescendants()) do
+				if objeto:IsA("MeshPart") or objeto:IsA("SpecialMesh") then
+					table.insert(meshes, objeto)
+				end
+			end
+			return meshes
+		end
+
+		local function NormalizarAssetId(texto)
+			if texto == "" then return "" end
+			if not texto:match("^rbxassetid://") then
+				local num = texto:match("(%d+)")
+				if num then texto = "rbxassetid://" .. num end
+			end
+			return texto
+		end
+
+		local function CreateMeshRow(toolName, meshObjName, meshIdOriginal, textureIdOriginal, order)
+			local row = Instance.new("Frame")
+			row.Size = UDim2.new(1, 0, 0, 80)
+			row.BackgroundTransparency = 1
+			row.LayoutOrder = order
+			row.Parent = GUI.MeshesListFrame
+
+			local lbl = Instance.new("TextLabel")
+			lbl.BackgroundTransparency = 1
+			lbl.Size = UDim2.new(1, 0, 0, 16)
+			lbl.Text = meshObjName .. "  (mesh: " .. tostring(meshIdOriginal) .. ")"
+			lbl.TextColor3 = Color3.fromRGB(220, 220, 220)
+			lbl.Font = Enum.Font.GothamBold
+			lbl.TextSize = 12
+			lbl.TextXAlignment = Enum.TextXAlignment.Left
+			lbl.TextTruncate = Enum.TextTruncate.AtEnd
+			lbl.Parent = row
+
+			local meshBox = Instance.new("TextBox")
+			meshBox.Position = UDim2.new(0, 0, 0, 20)
+			meshBox.Size = UDim2.new(1, 0, 0, 26)
+			meshBox.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+			meshBox.BackgroundTransparency = 0.9
+			meshBox.PlaceholderText = "Novo MeshId (rbxassetid://...)"
+			meshBox.Text = (meshesPorArma[toolName] and meshesPorArma[toolName][meshObjName] and meshesPorArma[toolName][meshObjName].meshId) or ""
+			meshBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+			meshBox.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+			meshBox.Font = Enum.Font.Gotham
+			meshBox.TextSize = 12
+			meshBox.ClearTextOnFocus = false
+			meshBox.Parent = row
+			Instance.new("UICorner", meshBox).CornerRadius = UDim.new(0, 6)
+
+			local texBox = Instance.new("TextBox")
+			texBox.Position = UDim2.new(0, 0, 0, 50)
+			texBox.Size = UDim2.new(1, 0, 0, 26)
+			texBox.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+			texBox.BackgroundTransparency = 0.9
+			texBox.PlaceholderText = "Novo TextureId (rbxassetid://...)"
+			texBox.Text = (meshesPorArma[toolName] and meshesPorArma[toolName][meshObjName] and meshesPorArma[toolName][meshObjName].textureId) or ""
+			texBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+			texBox.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+			texBox.Font = Enum.Font.Gotham
+			texBox.TextSize = 12
+			texBox.ClearTextOnFocus = false
+			texBox.Parent = row
+			Instance.new("UICorner", texBox).CornerRadius = UDim.new(0, 6)
+
+			meshBox.FocusLost:Connect(function()
+				local texto = NormalizarAssetId(meshBox.Text)
+				meshBox.Text = texto
+				meshesPorArma[toolName] = meshesPorArma[toolName] or {}
+				meshesPorArma[toolName][meshObjName] = meshesPorArma[toolName][meshObjName] or {}
+				meshesPorArma[toolName][meshObjName].meshId = (texto ~= "") and texto or nil
+				GUI:Notify("Meshes", texto == "" and "MeshId removido." or "MeshId salvo pra '"..meshObjName.."'.", 3)
+			end)
+
+			texBox.FocusLost:Connect(function()
+				local texto = NormalizarAssetId(texBox.Text)
+				texBox.Text = texto
+				meshesPorArma[toolName] = meshesPorArma[toolName] or {}
+				meshesPorArma[toolName][meshObjName] = meshesPorArma[toolName][meshObjName] or {}
+				meshesPorArma[toolName][meshObjName].textureId = (texto ~= "") and texto or nil
+				GUI:Notify("Meshes", texto == "" and "TextureId removido." or "TextureId salvo pra '"..meshObjName.."'.", 3)
+			end)
+		end
+
+		local function CarregarMeshesDaTool(tool)
+			LimparListaMeshes()
+			local meshes = EncontrarMeshesDaTool(tool)
+			for i, meshObj in ipairs(meshes) do
+				local texId = ""
+				if meshObj:IsA("MeshPart") then
+					texId = meshObj.TextureID or ""
+				elseif meshObj:IsA("SpecialMesh") then
+					texId = meshObj.TextureId or ""
+				end
+				CreateMeshRow(tool.Name, meshObj.Name, meshObj.MeshId, texId, i)
+			end
+			GUI.ArmaMeshesInspecionadaLabel.Text = "Mostrando: " .. tool.Name .. " (" .. #meshes .. " mesh(es))"
+		end
+
+		local function LimparListaToolsMeshes()
+			for _, child in ipairs(GUI.ToolsListFrameMeshes:GetChildren()) do
+				if child:IsA("TextButton") then child:Destroy() end
+			end
+		end
+
+		local function CreateToolButtonMeshes(tool, order)
+			local btn = Instance.new("TextButton")
+			btn.Size = UDim2.new(1, 0, 0, 32)
+			btn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+			btn.BackgroundTransparency = 0.88
+			btn.Text = "  " .. tool.Name
+			btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+			btn.Font = Enum.Font.Gotham
+			btn.TextSize = 13
+			btn.TextXAlignment = Enum.TextXAlignment.Left
+			btn.AutoButtonColor = false
+			btn.LayoutOrder = order
+			btn.Parent = GUI.ToolsListFrameMeshes
+			Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+			local p = Instance.new("UIPadding"); p.PaddingLeft = UDim.new(0, 10); p.Parent = btn
+			btn.MouseButton1Click:Connect(function() CarregarMeshesDaTool(tool) end)
+		end
+
+		local ultimaToolMeshMostrada = nil
+		local function AtualizarListaArmasMeshes()
+			LimparListaToolsMeshes()
+			local tools = EncontrarTodasAsTools()
+			local comMesh = {}
+			for _, tool in ipairs(tools) do
+				if #EncontrarMeshesDaTool(tool) > 0 then
+					table.insert(comMesh, tool)
+				end
+			end
+			if #comMesh == 0 then
+				GUI.ArmaMeshesInspecionadaLabel.Text = "Nenhuma arma com mesh trocavel na mochila/maos."
+				LimparListaMeshes()
+				ultimaToolMeshMostrada = nil
+				return
+			end
+			for i, tool in ipairs(comMesh) do CreateToolButtonMeshes(tool, i) end
+			local toolParaMostrar = comMesh[1]
+			if ultimaToolMeshMostrada then
+				for _, tool in ipairs(comMesh) do
+					if tool.Name == ultimaToolMeshMostrada then toolParaMostrar = tool; break end
+				end
+			end
+			ultimaToolMeshMostrada = toolParaMostrar.Name
+			CarregarMeshesDaTool(toolParaMostrar)
+		end
+
+		AtualizarListaArmasMeshes()
+
+		local backpackInicialMeshes = player:FindFirstChild("Backpack")
+		if backpackInicialMeshes then
+			backpackInicialMeshes.ChildAdded:Connect(AtualizarListaArmasMeshes)
+			backpackInicialMeshes.ChildRemoved:Connect(AtualizarListaArmasMeshes)
+		end
+		if player.Character then
+			player.Character.ChildAdded:Connect(AtualizarListaArmasMeshes)
+			player.Character.ChildRemoved:Connect(AtualizarListaArmasMeshes)
+		end
+		player.CharacterAdded:Connect(function(character)
+			character.ChildAdded:Connect(AtualizarListaArmasMeshes)
+			character.ChildRemoved:Connect(AtualizarListaArmasMeshes)
+			task.wait(1)
+			AtualizarListaArmasMeshes()
+		end)
+
+		-- Funcao global chamada pela logica de skin.
+		-- Para SpecialMesh: seta MeshType=FileMesh + MeshId + TextureId (metodo comprovado).
+		-- Para MeshPart: cria Part nova com SpecialMesh por cima (metodo comprovado).
+		function AplicarMeshNaArma(tool)
+			local mapaMeshes = meshesPorArma[tool.Name]
+			if not mapaMeshes then
+				print("[Meshes] Sem mapa pra tool:", tool.Name)
+				return 0, false
+			end
+
+			local trocadas = 0
+			-- Coleta antes pra nao modificar durante iteracao
+			local objetos = {}
+			for _, obj in ipairs(tool:GetDescendants()) do
+				if mapaMeshes[obj.Name] then
+					table.insert(objetos, obj)
+				end
+			end
+
+			for _, objeto in ipairs(objetos) do
+				local cfg = mapaMeshes[objeto.Name]
+				local novoMeshId = cfg.meshId
+				local novoTextureId = cfg.textureId
+				if not novoMeshId or novoMeshId == "" then continue end
+
+				print("[Meshes] Aplicando em:", objeto.Name, "(" .. objeto.ClassName .. ")", "MeshId:", novoMeshId)
+
+				if objeto:IsA("SpecialMesh") then
+					-- Metodo direto: seta FileMesh + IDs (o que funcionou no seu teste)
+					local ok, err = pcall(function()
+						objeto.MeshType = Enum.MeshType.FileMesh
+						objeto.MeshId = novoMeshId
+						if novoTextureId and novoTextureId ~= "" then
+							objeto.TextureId = novoTextureId
+						end
+					end)
+					if ok then
+						trocadas = trocadas + 1
+						print("[Meshes] SpecialMesh OK:", objeto.Name)
+					else
+						warn("[Meshes] ERRO SpecialMesh:", objeto.Name, err)
+					end
+
+				elseif objeto:IsA("MeshPart") then
+					-- MeshPart nao atualiza visual so mudando MeshId em alguns jogos.
+					-- Solucao: esconde o MeshPart e cria Part+SpecialMesh por cima,
+					-- exatamente como seu metodo que funcionou.
+					local ok, err = pcall(function()
+						local parent = objeto.Parent
+						if not parent then return end
+
+						-- Cria Part nova com as mesmas propriedades
+						local novaPart = Instance.new("Part")
+						novaPart.Name = objeto.Name .. "_SkinMesh"
+						novaPart.Size = objeto.Size
+						novaPart.CFrame = objeto.CFrame
+						novaPart.Anchored = objeto.Anchored
+						novaPart.CanCollide = false
+						novaPart.Transparency = objeto.Transparency
+						novaPart.Color = objeto.Color
+						novaPart.Material = objeto.Material
+						novaPart.Parent = parent
+
+						-- SpecialMesh com FileMesh (metodo que funciona)
+						local sm = Instance.new("SpecialMesh")
+						sm.MeshType = Enum.MeshType.FileMesh
+						sm.MeshId = novoMeshId
+						if novoTextureId and novoTextureId ~= "" then
+							sm.TextureId = novoTextureId
+						end
+						sm.Parent = novaPart
+
+						-- Esconde o MeshPart original
+						objeto.Transparency = 1
+						-- Desliga colisao do original
+						objeto.CanCollide = false
+					end)
+					if ok then
+						trocadas = trocadas + 1
+						print("[Meshes] MeshPart OK:", objeto.Name)
+					else
+						warn("[Meshes] ERRO MeshPart:", objeto.Name, err)
+					end
+
+				elseif objeto:IsA("BasePart") then
+					-- Part comum sem mesh: cria SpecialMesh por cima
+					local ok, err = pcall(function()
+						local existente = objeto:FindFirstChildOfClass("SpecialMesh")
+						if existente then existente:Destroy() end
+						local sm = Instance.new("SpecialMesh")
+						sm.MeshType = Enum.MeshType.FileMesh
+						sm.MeshId = novoMeshId
+						if novoTextureId and novoTextureId ~= "" then
+							sm.TextureId = novoTextureId
+						end
+						sm.Parent = objeto
+					end)
+					if ok then
+						trocadas = trocadas + 1
+						print("[Meshes] BasePart OK:", objeto.Name)
+					else
+						warn("[Meshes] ERRO BasePart:", objeto.Name, err)
+					end
+				end
+			end
+
+			print("[Meshes] Total:", trocadas, "trocadas de", #objetos, "encontrados")
+			return trocadas, true
+		end
+	end
+
+	-- ================= ABA: AMBIENTE =================
+	-- Envolvida em do...end: sao ~60 variaveis locais (skybox, color correction, bloom, dof,
+	-- atmosfera, chuva) usadas so dentro dos proprios cliques/callbacks daqui - nenhuma delas
+	-- e referenciada fora dessa secao. Sem isso o script estoura o limite de 200 locais do Lua
+	-- (erro "exceed limit 200") e nao roda NADA, nem aparece a caixinha de erro.
+	do
+	CreateLabel(GUI.HolderAmbiente, "Skybox:", 1)
+
+	GUI.SkyboxGrid = Instance.new("Frame")
+	GUI.SkyboxGrid.BackgroundTransparency = 1
+	GUI.SkyboxGrid.Size = UDim2.new(1, 0, 0, 0)
+	GUI.SkyboxGrid.LayoutOrder = 2
+	GUI.SkyboxGrid.Parent = GUI.HolderAmbiente
+	local skyboxGridLayout = Instance.new("UIGridLayout")
+	skyboxGridLayout.CellSize = UDim2.new(0, 128, 0, 96)
+	skyboxGridLayout.CellPadding = UDim2.new(0, 8, 0, 8)
+	skyboxGridLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	skyboxGridLayout.Parent = GUI.SkyboxGrid
+	ManageSizeFromLayout(GUI.SkyboxGrid, skyboxGridLayout)
+
+	local skyboxButtons = {}
+	local function AtualizarSelecaoSkybox()
+		for i, btn in ipairs(skyboxButtons) do
+			btn.selecionado.Visible = (i == ambienteState.skyboxIndex)
+			btn.stroke.Transparency = (i == ambienteState.skyboxIndex) and 0.2 or 0.85
+		end
+	end
+
+	local function CreateSkyboxCard(preset, index)
+		local card = Instance.new("TextButton")
+		card.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+		card.AutoButtonColor = false
+		card.Text = ""
+		card.LayoutOrder = index
+		card.Parent = GUI.SkyboxGrid
+		Instance.new("UICorner", card).CornerRadius = UDim.new(0, 8)
+
+		local stroke = Instance.new("UIStroke")
+		stroke.Color = Color3.fromRGB(255, 105, 180)
+		stroke.Thickness = 2
+		stroke.Transparency = 0.85
+		stroke.Parent = card
+
+		local previewFrame = Instance.new("Frame")
+		previewFrame.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+		previewFrame.BackgroundTransparency = (preset.Ft ~= "") and 1 or 0
+		previewFrame.Size = UDim2.new(1, -8, 1, -28)
+		previewFrame.Position = UDim2.new(0, 4, 0, 4)
+		previewFrame.ClipsDescendants = true
+		previewFrame.Parent = card
+		Instance.new("UICorner", previewFrame).CornerRadius = UDim.new(0, 6)
+
+		if preset.Ft ~= "" then
+			local img = Instance.new("ImageLabel")
+			img.BackgroundTransparency = 1
+			img.Size = UDim2.new(1, 0, 1, 0)
+			img.Image = preset.Ft
+			img.ScaleType = Enum.ScaleType.Crop
+			img.Parent = previewFrame
+		else
+			local icon = Instance.new("TextLabel")
+			icon.BackgroundTransparency = 1
+			icon.Size = UDim2.new(1, 0, 1, 0)
+			icon.Text = "Default"
+			icon.TextColor3 = Color3.fromRGB(200, 200, 200)
+			icon.Font = Enum.Font.GothamBold
+			icon.TextSize = 18
+			icon.Parent = previewFrame
+		end
+
+		local nomeLbl = Instance.new("TextLabel")
+		nomeLbl.BackgroundTransparency = 1
+		nomeLbl.Position = UDim2.new(0, 4, 1, -22)
+		nomeLbl.Size = UDim2.new(1, -8, 0, 18)
+		nomeLbl.Text = preset.nome
+		nomeLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+		nomeLbl.Font = Enum.Font.Gotham
+		nomeLbl.TextSize = 11
+		nomeLbl.Parent = card
+
+		local selecionado = Instance.new("Frame")
+		selecionado.BackgroundColor3 = Color3.fromRGB(255, 105, 180)
+		selecionado.BackgroundTransparency = 0.5
+		selecionado.Size = UDim2.new(0, 18, 0, 18)
+		selecionado.Position = UDim2.new(1, -22, 0, 4)
+		selecionado.Visible = false
+		selecionado.Parent = card
+		Instance.new("UICorner", selecionado).CornerRadius = UDim.new(1, 0)
+
+		card.MouseButton1Click:Connect(function()
+			AplicarSkybox(index)
+			AtualizarSelecaoSkybox()
+			GUI:Notify("Skin Changer", "Skybox: " .. preset.nome, 2)
+		end)
+		skyboxButtons[index] = {stroke = stroke, selecionado = selecionado}
+	end
+
+	for i, preset in ipairs(skyboxPresets) do CreateSkyboxCard(preset, i) end
+	AtualizarSelecaoSkybox()
+
+	CreateLabel(GUI.HolderAmbiente, "Color Correction:", 3)
+	local _, setSliderBrilho = CreateRangeSlider(GUI.HolderAmbiente, "Brilho", -1, 1, 0, 2, 4, function(v)
+		ambienteState.colorCorrectionBrightness = v
+		if fxColorCorrection then fxColorCorrection.Brightness = v end
+	end)
+	local _, setSliderContraste = CreateRangeSlider(GUI.HolderAmbiente, "Contraste", -1, 1, 0, 2, 5, function(v)
+		ambienteState.colorCorrectionContrast = v
+		if fxColorCorrection then fxColorCorrection.Contrast = v end
+	end)
+	local _, setSliderSaturacao = CreateRangeSlider(GUI.HolderAmbiente, "Saturacao", -1, 1, 0, 2, 6, function(v)
+		ambienteState.colorCorrectionSaturation = v
+		if fxColorCorrection then fxColorCorrection.Saturation = v end
+	end)
+
+	CreateLabel(GUI.HolderAmbiente, "Cor do mundo (Tint):", 7)
+	local ccTintPreview = Instance.new("Frame")
+	ccTintPreview.Size = UDim2.new(1, 0, 0, 40)
+	ccTintPreview.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	ccTintPreview.LayoutOrder = 8
+	ccTintPreview.Parent = GUI.HolderAmbiente
+	Instance.new("UICorner", ccTintPreview).CornerRadius = UDim.new(0, 8)
+
+	local tr, tg, tb = 255, 255, 255
+
+	local function AtualizarTintColor()
+		local cor = Color3.fromRGB(math.floor(tr), math.floor(tg), math.floor(tb))
+		ambienteState.colorCorrectionTintColor = cor
+		if fxColorCorrection then fxColorCorrection.TintColor = cor end
+		ccTintPreview.BackgroundColor3 = cor
+	end
+
+	local _, setSliderTr = CreateSlider(GUI.HolderAmbiente, "R", 255, 9, function(v) tr = v; AtualizarTintColor() end)
+	local _, setSliderTg = CreateSlider(GUI.HolderAmbiente, "G", 255, 10, function(v) tg = v; AtualizarTintColor() end)
+	local _, setSliderTb = CreateSlider(GUI.HolderAmbiente, "B", 255, 11, function(v) tb = v; AtualizarTintColor() end)
+
+	local ccTintBox = CreateTextInput(GUI.HolderAmbiente, "Ou digite um HEX (ex: FF6A00)", 12)
+	ccTintBox.FocusLost:Connect(function(enterPressed)
+		if enterPressed and ccTintBox.Text ~= "" then
+			local color = SafeHex(ccTintBox.Text)
+			if color then
+				tr = color.R * 255; tg = color.G * 255; tb = color.B * 255
+				AtualizarTintColor()
+				setSliderTr(tr); setSliderTg(tg); setSliderTb(tb)
+				GUI:Notify("Skin Changer", "Tint atualizado.", 2)
+			else
+				GUI:Notify("Skin Changer", "HEX invalido.", 2)
+			end
+		end
+	end)
+
+	CreateLabel(GUI.HolderAmbiente, "Presets de clima:", 13)
+
+	local climaPresets = {
+		{nome = "Normal", tint = Color3.fromRGB(255, 255, 255), brilho = 0, contraste = 0, saturacao = 0},
+		{nome = "Por do sol", tint = Color3.fromRGB(255, 170, 120), brilho = 0.05, contraste = 0.1, saturacao = 0.15},
+		{nome = "Noite fria", tint = Color3.fromRGB(140, 170, 255), brilho = -0.1, contraste = 0.1, saturacao = -0.2},
+		{nome = "Sepia", tint = Color3.fromRGB(255, 220, 170), brilho = -0.05, contraste = 0.05, saturacao = -0.6},
+		{nome = "Preto e branco", tint = Color3.fromRGB(255, 255, 255), brilho = 0, contraste = 0.1, saturacao = -1},
+		{nome = "Alerta vermelho", tint = Color3.fromRGB(255, 90, 90), brilho = -0.05, contraste = 0.2, saturacao = -0.1},
+		{nome = "Radioativo", tint = Color3.fromRGB(170, 255, 130), brilho = 0, contraste = 0.15, saturacao = 0.3},
+		{nome = "Sonho roxo", tint = Color3.fromRGB(200, 150, 255), brilho = 0.05, contraste = 0, saturacao = 0.1},
+	}
+
+	local ccPresetsGrid = Instance.new("Frame")
+	ccPresetsGrid.BackgroundTransparency = 1
+	ccPresetsGrid.Size = UDim2.new(1, 0, 0, 0)
+	ccPresetsGrid.LayoutOrder = 14
+	ccPresetsGrid.Parent = GUI.HolderAmbiente
+	local ccPresetsLayout = Instance.new("UIGridLayout")
+	ccPresetsLayout.CellSize = UDim2.new(0, 100, 0, 32)
+	ccPresetsLayout.CellPadding = UDim2.new(0, 6, 0, 6)
+	ccPresetsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	ccPresetsLayout.Parent = ccPresetsGrid
+	ManageSizeFromLayout(ccPresetsGrid, ccPresetsLayout)
+
+	for i, preset in ipairs(climaPresets) do
+		local btn = Instance.new("TextButton")
+		btn.BackgroundColor3 = preset.tint
+		btn.BackgroundTransparency = 0.35
+		btn.Text = preset.nome
+		btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		btn.Font = Enum.Font.GothamBold
+		btn.TextSize = 11
+		btn.AutoButtonColor = false
+		btn.LayoutOrder = i
+		btn.Parent = ccPresetsGrid
+		Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+		local st = Instance.new("UIStroke")
+		st.Color = Color3.fromRGB(255, 255, 255); st.Transparency = 0.7; st.Thickness = 1; st.Parent = btn
+
+		btn.MouseButton1Click:Connect(function()
+			tr = preset.tint.R * 255; tg = preset.tint.G * 255; tb = preset.tint.B * 255
+			AtualizarTintColor()
+			setSliderTr(tr); setSliderTg(tg); setSliderTb(tb)
+			ambienteState.colorCorrectionBrightness = preset.brilho
+			ambienteState.colorCorrectionContrast = preset.contraste
+			ambienteState.colorCorrectionSaturation = preset.saturacao
+			if fxColorCorrection then
+				fxColorCorrection.Brightness = preset.brilho
+				fxColorCorrection.Contrast = preset.contraste
+				fxColorCorrection.Saturation = preset.saturacao
+			end
+			setSliderBrilho(preset.brilho); setSliderContraste(preset.contraste); setSliderSaturacao(preset.saturacao)
+			GUI:Notify("Skin Changer", "Clima: " .. preset.nome, 2)
+		end)
+	end
+
+	CreateLabel(GUI.HolderAmbiente, "Bloom:", 15)
+	local _, setSliderBloomI = CreateRangeSlider(GUI.HolderAmbiente, "Intensidade", 0, 5, 0, 2, 16, function(v)
+		ambienteState.bloomIntensity = v; if fxBloom then fxBloom.Intensity = v end
+	end)
+	local _, setSliderBloomS = CreateRangeSlider(GUI.HolderAmbiente, "Tamanho", 0, 56, 24, 0, 17, function(v)
+		ambienteState.bloomSize = v; if fxBloom then fxBloom.Size = v end
+	end)
+	local _, setSliderBloomT = CreateRangeSlider(GUI.HolderAmbiente, "Limiar", 0, 2, 2, 2, 18, function(v)
+		ambienteState.bloomThreshold = v; if fxBloom then fxBloom.Threshold = v end
+	end)
+
+	CreateLabel(GUI.HolderAmbiente, "Depth of Field:", 19)
+	local _, setSliderDofFar = CreateRangeSlider(GUI.HolderAmbiente, "Intensidade (longe)", 0, 1, 0, 2, 20, function(v)
+		ambienteState.dofFarIntensity = v; if fxDof then fxDof.FarIntensity = v end
+	end)
+	local _, setSliderDofNear = CreateRangeSlider(GUI.HolderAmbiente, "Intensidade (perto)", 0, 1, 0, 2, 21, function(v)
+		ambienteState.dofNearIntensity = v; if fxDof then fxDof.NearIntensity = v end
+	end)
+	local _, setSliderDofFocus = CreateRangeSlider(GUI.HolderAmbiente, "Distancia foco", 0, 500, 0.1, 1, 22, function(v)
+		ambienteState.dofFocusDistance = v; if fxDof then fxDof.FocusDistance = v end
+	end)
+
+	CreateLabel(GUI.HolderAmbiente, "Atmosphere:", 23)
+	local _, setSliderAtmoDensity = CreateRangeSlider(GUI.HolderAmbiente, "Densidade", 0, 1, 0.3, 2, 24, function(v)
+		ambienteState.atmosphereDensity = v; if fxAtmosphere then fxAtmosphere.Density = v end
+	end)
+	local _, setSliderAtmoHaze = CreateRangeSlider(GUI.HolderAmbiente, "Neblina", 0, 10, 0, 2, 25, function(v)
+		ambienteState.atmosphereHaze = v; if fxAtmosphere then fxAtmosphere.Haze = v end
+	end)
+	local _, setSliderAtmoGlare = CreateRangeSlider(GUI.HolderAmbiente, "Brilho", 0, 10, 0, 2, 26, function(v)
+		ambienteState.atmosphereGlare = v; if fxAtmosphere then fxAtmosphere.Glare = v end
+	end)
+
+	-- ================= CHUVA =================
+	local rainConfig = {
+		dropsCount = 200, wind = Vector3.new(-5, 0, 3),
+		muffledVolume = 0.15, normalVolume = 0.5, rayDistance = 250,
+		dropSize = Vector3.new(0.03, 1.2, 0.03), dropColor = Color3.fromRGB(190, 190, 255),
+		volumeLerpSpeed = 3, spawnRadius = 80, spawnHeightMin = 50, spawnHeightMax = 90,
+		maxRespawnAttempts = 3, respawnCooldown = 0.4, maxResetsPerFrame = 20, coverCheckInterval = 0.2,
+	}
+
+	local rainWindDir = rainConfig.wind.Unit
+	local rainDropCFrameOffset = CFrame.new(Vector3.new(0,0,0), Vector3.new(rainWindDir.X, -1, rainWindDir.Z))
+
+	local rainRuntime = {
+		ativa = false, folder = nil, drops = nil, connection = nil,
+		sound = nil, eq = nil, rayParams = nil, coverRayParams = nil, clouds = nil,
+		savedCloudsCover = nil, savedCloudsColor = nil, savedAtmosphereDensity = nil,
+		isCovered = false, proximoCoverCheck = 0,
+	}
+
+	local function RainGetHead()
+		local c = player.Character
+		return c and c:FindFirstChild("Head")
+	end
+
+	local function RainAcharPosicaoSpawn(camPos)
+		for _ = 1, rainConfig.maxRespawnAttempts do
+			local pos = camPos + Vector3.new(
+				math.random(-rainConfig.spawnRadius, rainConfig.spawnRadius),
+				math.random(rainConfig.spawnHeightMin, rainConfig.spawnHeightMax),
+				math.random(-rainConfig.spawnRadius, rainConfig.spawnRadius))
+			local origin = pos + Vector3.new(0, 100, 0)
+			local resultado = workspace:Raycast(origin, Vector3.new(0, -(100 + rainConfig.spawnHeightMax + 5), 0), rainRuntime.rayParams)
+			if not resultado or resultado.Position.Y <= pos.Y then return pos end
+		end
+		return nil
+	end
+
+	local function RainResetarGota(data, camPos)
+		local pos = RainAcharPosicaoSpawn(camPos)
+		if pos then
+			data.part.Position = pos; data.part.Transparency = 0; data.alive = true
+		else
+			data.part.Transparency = 1; data.alive = false
+		end
+	end
+
+	local function RainCriarParticulas()
+		if rainRuntime.folder then return end
+		rainRuntime.folder = workspace:FindFirstChild("SkinChangerRain") or Instance.new("Folder", workspace)
+		rainRuntime.folder.Name = "SkinChangerRain"
+
+		rainRuntime.rayParams = RaycastParams.new()
+		rainRuntime.rayParams.FilterDescendantsInstances = { rainRuntime.folder }
+		rainRuntime.rayParams.FilterType = Enum.RaycastFilterType.Exclude
+		rainRuntime.rayParams.IgnoreWater = true
+
+		-- RaycastParams separado só pro check de "o jogador está coberto?" (usado pro som
+		-- ficar abafado embaixo de teto). Precisa de um filtro próprio porque, além da pasta
+		-- de gotas, também tem que ignorar o Character — senão o raio (que sai bem do centro
+		-- da cabeça pra cima) bate na sua própria cabeça/cabelo/acessório e acha que você está
+		-- sempre coberto, deixando o som abafado pra sempre.
+		rainRuntime.coverRayParams = RaycastParams.new()
+		rainRuntime.coverRayParams.FilterType = Enum.RaycastFilterType.Exclude
+		rainRuntime.coverRayParams.IgnoreWater = true
+
+		rainRuntime.drops = {}
+		for _ = 1, rainConfig.dropsCount do
+			local drop = Instance.new("Part")
+			drop.Anchored = true; drop.CanCollide = false; drop.CanQuery = false
+			drop.CastShadow = false; drop.Material = Enum.Material.Neon
+			drop.Color = rainConfig.dropColor; drop.Size = rainConfig.dropSize
+			drop.Transparency = 1; drop.Parent = rainRuntime.folder
+			table.insert(rainRuntime.drops, {
+				part = drop, vel = math.random(220, 300), alive = false,
+				nextTry = math.random() * rainConfig.respawnCooldown,
+			})
+		end
+	end
+
+	local function RainCriarSom()
+		if rainRuntime.sound then return end
+		local ambience = workspace:FindFirstChild("outsideAmbience") or Instance.new("Folder", workspace)
+		ambience.Name = "outsideAmbience"
+		rainRuntime.sound = ambience:FindFirstChild("rainOutside") or Instance.new("Sound", ambience)
+		rainRuntime.sound.Name = "rainOutside"
+		rainRuntime.sound.SoundId = "rbxassetid://1516791621"
+		rainRuntime.sound.Looped = true
+		rainRuntime.sound.Volume = 0
+		rainRuntime.eq = rainRuntime.sound:FindFirstChildOfClass("EqualizerSoundEffect") or Instance.new("EqualizerSoundEffect", rainRuntime.sound)
+		rainRuntime.eq.LowGain = 0; rainRuntime.eq.MidGain = 0; rainRuntime.eq.HighGain = 0
+	end
+
+	local function RainAtualizar(dt)
+		local head = RainGetHead()
+		local camPos = (workspace.CurrentCamera and workspace.CurrentCamera.CFrame.Position) or (head and head.Position)
+		if not camPos then return end
+		local agora = tick()
+
+		if head and agora >= rainRuntime.proximoCoverCheck then
+			local character = player.Character
+			rainRuntime.coverRayParams.FilterDescendantsInstances = character
+				and { rainRuntime.folder, character }
+				or { rainRuntime.folder }
+			local r = workspace:Raycast(head.Position, Vector3.new(0, rainConfig.rayDistance, 0), rainRuntime.coverRayParams)
+			rainRuntime.isCovered = r ~= nil
+			rainRuntime.proximoCoverCheck = agora + rainConfig.coverCheckInterval
+		end
+
+		local targetVol = rainRuntime.isCovered and rainConfig.muffledVolume or rainConfig.normalVolume
+		local targetHG = rainRuntime.isCovered and -35 or 0
+		local alpha = math.clamp(rainConfig.volumeLerpSpeed * dt, 0, 1)
+		rainRuntime.sound.Volume = rainRuntime.sound.Volume + (targetVol - rainRuntime.sound.Volume) * alpha
+		rainRuntime.eq.HighGain = rainRuntime.eq.HighGain + (targetHG - rainRuntime.eq.HighGain) * alpha
+
+		local resetsFeitos = 0
+		for _, data in ipairs(rainRuntime.drops) do
+			local drop = data.part
+			if not data.alive then
+				if resetsFeitos < rainConfig.maxResetsPerFrame and agora >= data.nextTry then
+					RainResetarGota(data, camPos)
+					data.nextTry = agora + rainConfig.respawnCooldown * (0.8 + math.random() * 0.4)
+					resetsFeitos = resetsFeitos + 1
+				end
+			else
+				local displacement = Vector3.new(0, -data.vel * dt, 0) + (rainConfig.wind * dt)
+				local hit = workspace:Raycast(drop.Position, displacement, rainRuntime.rayParams)
+				if hit then
+					data.alive = false
+					data.nextTry = agora + rainConfig.respawnCooldown * (0.8 + math.random() * 0.4)
+					drop.Transparency = 1
+				else
+					local nextPos = drop.Position + displacement
+					drop.CFrame = CFrame.new(nextPos) * rainDropCFrameOffset
+					drop.Position = nextPos
+					if nextPos.Y < camPos.Y - 10 then
+						data.alive = false
+						data.nextTry = agora + rainConfig.respawnCooldown * (0.8 + math.random() * 0.4)
+						drop.Transparency = 1
+					end
+				end
+			end
+		end
+	end
+
+	local function StartRain()
+		if rainRuntime.ativa then return end
+		rainRuntime.ativa = true
+		GUI.ChuvaAtiva = true -- espelha o estado fora deste bloco (rainRuntime e local aqui dentro)
+		RainCriarParticulas(); RainCriarSom()
+		rainRuntime.sound:Play()
+
+		local terrain = workspace:FindFirstChildOfClass("Terrain")
+		if terrain then
+			rainRuntime.clouds = terrain:FindFirstChildOfClass("Clouds")
+			if rainRuntime.clouds then
+				rainRuntime.savedCloudsCover = rainRuntime.clouds.Cover
+				rainRuntime.savedCloudsColor = rainRuntime.clouds.Color
+			else
+				pcall(function() rainRuntime.clouds = Instance.new("Clouds", terrain) end)
+			end
+			if rainRuntime.clouds then
+				rainRuntime.clouds.Cover = 1
+				rainRuntime.clouds.Color = Color3.fromRGB(170, 170, 170)
+			end
+		end
+
+		rainRuntime.savedAtmosphereDensity = ambienteState.atmosphereDensity
+		local densidadeChuva = math.max(ambienteState.atmosphereDensity, 0.45)
+		ambienteState.atmosphereDensity = densidadeChuva
+		if fxAtmosphere then fxAtmosphere.Density = densidadeChuva end
+		setSliderAtmoDensity(densidadeChuva)
+
+		rainRuntime.connection = RunService.RenderStepped:Connect(RainAtualizar)
+	end
+
+	local function StopRain()
+		if not rainRuntime.ativa then return end
+		rainRuntime.ativa = false
+		GUI.ChuvaAtiva = false -- espelha o estado fora deste bloco (rainRuntime e local aqui dentro)
+		if rainRuntime.connection then rainRuntime.connection:Disconnect(); rainRuntime.connection = nil end
+		if rainRuntime.sound then rainRuntime.sound:Stop() end
+		if rainRuntime.drops then
+			for _, data in ipairs(rainRuntime.drops) do data.part.Transparency = 1; data.alive = false end
+		end
+		if rainRuntime.clouds then
+			if rainRuntime.savedCloudsCover then
+				rainRuntime.clouds.Cover = rainRuntime.savedCloudsCover
+				rainRuntime.clouds.Color = rainRuntime.savedCloudsColor
+			else
+				pcall(function() rainRuntime.clouds:Destroy() end)
+				rainRuntime.clouds = nil
+			end
+		end
+		if rainRuntime.savedAtmosphereDensity then
+			ambienteState.atmosphereDensity = rainRuntime.savedAtmosphereDensity
+			if fxAtmosphere then fxAtmosphere.Density = rainRuntime.savedAtmosphereDensity end
+			setSliderAtmoDensity(rainRuntime.savedAtmosphereDensity)
+			rainRuntime.savedAtmosphereDensity = nil
+		end
+	end
+
+	CreateLabel(GUI.HolderAmbiente, "Clima:", 27)
+	local rainToggleRow = CreateCheckbox(GUI.HolderAmbiente, "Ativar chuva", 28,
+		function() return rainRuntime.ativa end,
+		function(v) if v then StartRain() else StopRain() end end
+	)
+	CreateLabel(GUI.HolderAmbiente, "Some perto de telhados/tetos.", 29)
+
+	local resetAmbienteBtn = CreateButton(GUI.HolderAmbiente, "Restaurar ambiente padrao", 30)
+	resetAmbienteBtn.MouseButton1Click:Connect(function()
+		AplicarSkybox(1); AtualizarSelecaoSkybox()
+		tr = 255; tg = 255; tb = 255; AtualizarTintColor()
+		setSliderTr(255); setSliderTg(255); setSliderTb(255)
+		ambienteState.colorCorrectionBrightness = 0
+		ambienteState.colorCorrectionContrast = 0
+		ambienteState.colorCorrectionSaturation = 0
+		if fxColorCorrection then
+			fxColorCorrection.Brightness = 0; fxColorCorrection.Contrast = 0; fxColorCorrection.Saturation = 0
+		end
+		setSliderBrilho(0); setSliderContraste(0); setSliderSaturacao(0)
+		ambienteState.bloomIntensity = 0; ambienteState.bloomSize = 24; ambienteState.bloomThreshold = 2
+		if fxBloom then fxBloom.Intensity = 0; fxBloom.Size = 24; fxBloom.Threshold = 2 end
+		setSliderBloomI(0); setSliderBloomS(24); setSliderBloomT(2)
+		ambienteState.dofFarIntensity = 0; ambienteState.dofNearIntensity = 0; ambienteState.dofFocusDistance = 0.1
+		if fxDof then fxDof.FarIntensity = 0; fxDof.NearIntensity = 0; fxDof.FocusDistance = 0.1 end
+		setSliderDofFar(0); setSliderDofNear(0); setSliderDofFocus(0.1)
+		ambienteState.atmosphereDensity = 0.3; ambienteState.atmosphereHaze = 0; ambienteState.atmosphereGlare = 0
+		if fxAtmosphere then fxAtmosphere.Density = 0.3; fxAtmosphere.Haze = 0; fxAtmosphere.Glare = 0 end
+		setSliderAtmoDensity(0.3); setSliderAtmoHaze(0); setSliderAtmoGlare(0)
+		StopRain()
+		local rb = rainToggleRow:FindFirstChildOfClass("TextButton")
+		if rb then rb.BackgroundTransparency = 0.85 end
+		GUI:Notify("Skin Changer", "Ambiente restaurado.", 3)
+	end)
+
+	-- Expõe pro "Importar loadout" (outro bloco de escopo, la na aba Config) conseguir
+	-- reaplicar tint/bloom/dof/etc. Sem isso essas funcoes ficam presas aqui dentro e a
+	-- importacao nao consegue chama-las (mesmo problema que ja rolou com a chuva).
+	GUI.AtualizarSelecaoSkybox = AtualizarSelecaoSkybox
+	GUI.SetSliderBrilho = setSliderBrilho
+	GUI.SetSliderContraste = setSliderContraste
+	GUI.SetSliderSaturacao = setSliderSaturacao
+	GUI.AplicarTintRGB = function(r, g, b)
+		tr, tg, tb = r, g, b
+		AtualizarTintColor()
+	end
+	GUI.SetSliderTr = setSliderTr
+	GUI.SetSliderTg = setSliderTg
+	GUI.SetSliderTb = setSliderTb
+	GUI.SetSliderBloomI = setSliderBloomI
+	GUI.SetSliderBloomS = setSliderBloomS
+	GUI.SetSliderBloomT = setSliderBloomT
+	GUI.SetSliderDofFar = setSliderDofFar
+	GUI.SetSliderDofNear = setSliderDofNear
+	GUI.SetSliderDofFocus = setSliderDofFocus
+	GUI.SetSliderAtmoDensity = setSliderAtmoDensity
+	GUI.SetSliderAtmoHaze = setSliderAtmoHaze
+	GUI.SetSliderAtmoGlare = setSliderAtmoGlare
+	end
+
+	-- ================= ABA: CONFIG =================
+	CreateLabel(GUI.HolderConfig, "Automacoes:", 1)
+	CreateCheckbox(GUI.HolderConfig, "Auto-aplicar skin apos respawn", 2,
+		function() return state.autoAplicarRespawn end, function(v) state.autoAplicarRespawn = v end)
+	CreateLabel(GUI.HolderConfig, "Reaplica a skin quando o character renascer.", 3)
+	CreateCheckbox(GUI.HolderConfig, "Auto-aplicar ao receber arma nova", 4,
+		function() return state.autoAplicarEquip end, function(v) state.autoAplicarEquip = v end)
+	CreateLabel(GUI.HolderConfig, "Aplica skin quando uma Tool aparecer na mochila/maos.", 5)
+	CreateCheckbox(GUI.HolderConfig, "Ignorar handlers/grips invisiveis", 7,
+		function() return state.ignorarPartsInvisiveis end, function(v) state.ignorarPartsInvisiveis = v end)
+	CreateLabel(GUI.HolderConfig, "Nao aplica cor/textura em parts que ja eram invisiveis.", 8)
+	CreateLabel(GUI.HolderConfig, "Extras visuais (avatar):", 9)
+	CreateCheckbox(GUI.HolderConfig, "Headless (cabeca invisivel)", 10,
+		function() return state.headlessAtivo end,
+		function(v)
+			state.headlessAtivo = v
+			if v and player.Character then AplicarHeadless(player.Character); GUI:Notify("Skin Changer", "Headless aplicado.", 2) end
+		end)
+	CreateCheckbox(GUI.HolderConfig, "Korblox (pernas)", 11,
+		function() return state.korbloxAtivo end,
+		function(v)
+			state.korbloxAtivo = v
+			if v and player.Character then AplicarKorblox(player.Character); GUI:Notify("Skin Changer", "Korblox aplicado.", 2) end
+		end)
+	CreateLabel(GUI.HolderConfig, "Reaplicados automaticamente a cada respawn.", 12)
+	CreateCheckbox(GUI.HolderConfig, "Usar minha roupa de verdade (ignora uniforme de time)", 13,
+		function() return state.roupaPropriaAtiva end,
+		function(v)
+			state.roupaPropriaAtiva = v
+			if v and player.Character then
+				_G.SkinChangerAplicarRoupaPropria(player.Character)
+				if GUI.DescricaoRoupaPropria then
+					GUI:Notify("Skin Changer", "Roupa propria aplicada.", 2)
+				else
+					GUI:Notify("Skin Changer", "Nao consegui buscar sua roupa (confira o Output/F9).", 4)
+				end
+			end
+		end)
+	CreateLabel(GUI.HolderConfig, "Forca sua roupa do avatar sempre que o jogo trocar seu Shirt/Pants por um uniforme.", 14)
+	CreateLabel(GUI.HolderConfig, "Killfeed:", 15)
+	CreateCheckbox(GUI.HolderConfig, "Ativar killfeed", 16,
+		function() return state.killfeedAtivo end, function(v) state.killfeedAtivo = v end)
+	CreateLabel(GUI.HolderConfig, "Le ReplicatedStorage.Killfeed. Visual ainda vem so como notificacao.", 17)
+	CreateCheckbox(GUI.HolderConfig, "Ativar contador de kills na tela", 18,
+		function() return state.contadorKillsAtivo end,
+		function(v)
+			state.contadorKillsAtivo = v
+			if GUI.ContadorKillsFrame then GUI.ContadorKillsFrame.Visible = v end
+		end)
+	CreateLabel(GUI.HolderConfig, "Mostra um contador fixo no topo da tela, so conta SUAS kills. Arraste com o botao esquerdo, clique com o direito pra zerar.", 19)
+
+	-- ----- Loadout (salvar/carregar todas as customizacoes) -----
+	-- Envolvido em do...end pra essas variaveis nao contarem pro limite de locais.
+	do
+		local HttpService = game:GetService("HttpService")
+
+		CreateLabel(GUI.HolderConfig, "Loadout (salvar/carregar tudo):", 20)
+		CreateLabel(GUI.HolderConfig, "Exportar gera um codigo. Guarde ele em algum lugar. Pra carregar, cole o codigo aqui e aperte Importar.", 21)
+
+		local loadoutBox = Instance.new("TextBox")
+		loadoutBox.Size = UDim2.new(1, 0, 0, 90)
+		loadoutBox.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		loadoutBox.BackgroundTransparency = 0.9
+		loadoutBox.PlaceholderText = "O codigo do loadout aparece aqui (ou cole um pra importar)"
+		loadoutBox.Text = ""
+		loadoutBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+		loadoutBox.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+		loadoutBox.Font = Enum.Font.Code
+		loadoutBox.TextSize = 12
+		loadoutBox.TextWrapped = true
+		loadoutBox.MultiLine = true
+		loadoutBox.TextXAlignment = Enum.TextXAlignment.Left
+		loadoutBox.TextYAlignment = Enum.TextYAlignment.Top
+		loadoutBox.ClearTextOnFocus = false
+		loadoutBox.LayoutOrder = 22
+		loadoutBox.Parent = GUI.HolderConfig
+		Instance.new("UICorner", loadoutBox).CornerRadius = UDim.new(0, 8)
+
+		local btnExportar = CreateButton(GUI.HolderConfig, "Exportar loadout", 23)
+		local btnImportar = CreateButton(GUI.HolderConfig, "Importar loadout", 24)
+
+		-- Color3 e Enum (tipo Enum.Material) viram string curta em vez de tabela aninhada -
+		-- deixa o codigo BEM menor (importante pra caber inteiro num copia-cola sem truncar).
+		local function Codificar(v)
+			local t = typeof(v)
+			if t == "Color3" then
+				return string.format("C:%02X%02X%02X",
+					math.floor(v.R * 255 + 0.5), math.floor(v.G * 255 + 0.5), math.floor(v.B * 255 + 0.5))
+			elseif t == "EnumItem" then
+				return "E:" .. tostring(v.EnumType) .. ":" .. v.Name
+			elseif t == "table" then
+				local saida = {}
+				for k, vv in pairs(v) do
+					saida[tostring(k)] = Codificar(vv)
+				end
+				return saida
+			else
+				return v
+			end
+		end
+
+		local function Decodificar(v)
+			if type(v) == "string" then
+				if v:sub(1, 2) == "C:" then
+					local hex = v:sub(3)
+					local r, g, b = tonumber(hex:sub(1, 2), 16), tonumber(hex:sub(3, 4), 16), tonumber(hex:sub(5, 6), 16)
+					if r and g and b then return Color3.fromRGB(r, g, b) end
+					return nil
+				elseif v:sub(1, 2) == "E:" then
+					local enumNome, itemNome = v:sub(3):match("^(.-):(.+)$")
+					if enumNome and itemNome then
+						local ok, item = pcall(function() return Enum[enumNome][itemNome] end)
+						if ok then return item end
+					end
+					return nil
+				else
+					return v
+				end
+			elseif type(v) == "table" then
+				local saida = {}
+				for k, vv in pairs(v) do
+					saida[k] = Decodificar(vv)
+				end
+				return saida
+			else
+				return v
+			end
+		end
+
+		-- Esvazia e repopula uma tabela existente (nao da pra so trocar a referencia, porque
+		-- outras partes do script ja guardaram uma "copia" dessa mesma tabela).
+		local function SubstituirConteudo(tabelaAlvo, novosDados)
+			if not tabelaAlvo or not novosDados then return end
+			for k in pairs(tabelaAlvo) do tabelaAlvo[k] = nil end
+			for k, v in pairs(Decodificar(novosDados)) do tabelaAlvo[k] = v end
+		end
+
+		btnExportar.MouseButton1Click:Connect(function()
+			-- TUDO isso agora vai dentro do pcall (antes so o JSONEncode estava protegido;
+			-- se Codificar(...) desse erro na montagem dos dados, o clique morria em silencio,
+			-- sem notificacao nenhuma - por isso parecia que "nao acontecia nada").
+			local ok, resultado = pcall(function()
+				-- chaves curtas de proposito, pra economizar caracteres no codigo final
+				local dadosMira = {
+					cursorDecal = GUI.CursorBox and GUI.CursorBox.Text or "",
+					cursorAtivo = GUI.CursorCustomAtivo or false,
+					followerDecal = GUI.FollowerBox and GUI.FollowerBox.Text or "",
+					followerAtivo = GUI.FollowerAtivo or false,
+					offX = GUI.FollowerOffsetX, offY = GUI.FollowerOffsetY,
+					size = GUI.FollowerSize, speed = GUI.FollowerSpeed,
+					wobbleForca = GUI.FollowerWobbleForca, wobbleVel = GUI.FollowerWobbleVel,
+					crosshairAtivo = GUI.CrosshairFollowAtiva or false,
+				}
+				local dados = {
+					v = 3,
+					st = Codificar(state),
+					ts = Codificar(tracerState),
+					wp = Codificar(armasAlvo),
+					sk = Codificar(skinsPorArma),
+					sn = Codificar(GUI.SonsPorArma or {}),
+					ms = Codificar(GUI.MeshesPorArma or {}),
+					am = Codificar(ambienteState),
+					mr = Codificar(dadosMira),
+					-- killstreak: exporta a tabela sonsKillstreak (IDs de cada anuncio)
+					kf = Codificar(sonsKillstreak or {}),
+					-- killsounds por arma: IDs customizados de som de kill
+					ks = Codificar(GUI.SonsPorArma or {}),
+					chuva = GUI.ChuvaAtiva or false,
+					modoEscuro = GUI.ModoEscuroAtivo or false,
+					-- flags de config que estao em state mas precisam de re-apply
+					roupaPropria = state.roupaPropriaAtiva or false,
+					headless = state.headlessAtivo or false,
+					korblox = state.korbloxAtivo or false,
+					hudFofo = state.hudFofoAtivo or false,
+					killsoundsAtivo = state.killsoundsAtivo or false,
+					killsoundsVol = state.killsoundsVolume or 1,
+					somDeKillAtivo = state.somDeKillAtivo or false,
+					somDeKillVol = state.somDeKillVolume or 1,
+					somDeKillId = state.somDeKillId or "",
+				}
+				return HttpService:JSONEncode(dados)
+			end)
+
+			if not ok then
+				-- warn() joga a mensagem no Output/F9, e o Notify garante que voce VE que algo
+				-- deu errado (antes, um erro aqui nao mostrava nada pra voce).
+				warn("[SkinChanger] Erro ao exportar loadout: " .. tostring(resultado))
+				GUI:Notify("Loadout", "Erro ao gerar o codigo: " .. tostring(resultado) .. " (confira o Output/F9 pra detalhes)", 6)
+				return
+			end
+
+			local json = resultado
+			loadoutBox.Text = json
+			pcall(function() if setclipboard then setclipboard(json) end end)
+			GUI:Notify("Loadout", #json .. " caracteres gerados na caixa acima. Copie TUDO (Ctrl+A, Ctrl+C) e guarde em algum lugar seguro.", 6)
+		end)
+
+		btnImportar.MouseButton1Click:Connect(function()
+			local texto = loadoutBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
+			if texto == "" then
+				GUI:Notify("Loadout", "Cole um codigo de loadout na caixa antes de importar.", 4)
+				return
+			end
+			local ok, dados = pcall(function() return HttpService:JSONDecode(texto) end)
+			if not ok or type(dados) ~= "table" then
+				GUI:Notify("Loadout", "Codigo invalido (" .. tostring(dados) .. "). Confira se colou o texto INTEIRO, sem cortar nada.", 6)
+				return
+			end
+
+			-- Protegido num pcall: se der erro no meio (ex: um valor faltando no codigo colado),
+			-- antes isso parava tudo NO MEIO em silencio (por isso tint/bloom/dof nao aplicavam).
+			-- Agora, se falhar em algum ponto, voce recebe um aviso com o motivo.
+			local okAplicar, erroAplicar = pcall(function()
+				SubstituirConteudo(state, dados.st)
+				SubstituirConteudo(tracerState, dados.ts)
+				SubstituirConteudo(armasAlvo, dados.wp)
+				SubstituirConteudo(skinsPorArma, dados.sk)
+				SubstituirConteudo(GUI.SonsPorArma, dados.sn)
+				SubstituirConteudo(GUI.MeshesPorArma, dados.ms)
+				SubstituirConteudo(ambienteState, dados.am)
+
+				-- killstreak sounds: restaura na tabela sonsKillstreak real
+				if dados.kf then SubstituirConteudo(sonsKillstreak, dados.kf) end
+				-- killsounds por arma (v3+)
+				if dados.ks then SubstituirConteudo(GUI.SonsPorArma, dados.ks) end
+
+				-- flags de config extras (v3+)
+				if dados.roupaPropria ~= nil then
+					state.roupaPropriaAtiva = dados.roupaPropria
+					if state.roupaPropriaAtiva and player.Character then
+						pcall(function() _G.SkinChangerAplicarRoupaPropria(player.Character) end)
+					end
+				end
+				if dados.headless ~= nil then
+					state.headlessAtivo = dados.headless
+				end
+				if dados.korblox ~= nil then
+					state.korbloxAtivo = dados.korblox
+				end
+				if (state.headlessAtivo or state.korbloxAtivo) and player.Character then
+					pcall(function() AplicarExtrasVisuais(player.Character) end)
+				end
+				if dados.hudFofo ~= nil then
+					state.hudFofoAtivo = dados.hudFofo
+					if GUI.AtualizarVisibilidadeHudFofo then
+						pcall(GUI.AtualizarVisibilidadeHudFofo)
+					end
+				end
+				if dados.killsoundsAtivo ~= nil then
+					state.killsoundsAtivo = dados.killsoundsAtivo
+				end
+				if dados.killsoundsVol ~= nil then
+					state.killsoundsVolume = dados.killsoundsVol
+				end
+				if dados.somDeKillAtivo ~= nil then
+					state.somDeKillAtivo = dados.somDeKillAtivo
+				end
+				if dados.somDeKillVol ~= nil then
+					state.somDeKillVolume = dados.somDeKillVol
+				end
+				if dados.somDeKillId ~= nil and dados.somDeKillId ~= "" then
+					state.somDeKillId = dados.somDeKillId
+					if GUI.SomDeKillBox then GUI.SomDeKillBox.Text = dados.somDeKillId end
+				end
+
+				-- ----- Ambiente: aplica nos efeitos de Lighting de verdade + sincroniza sliders/skybox -----
+				AplicarSkybox(ambienteState.skyboxIndex)
+				GUI.AtualizarSelecaoSkybox()
+				if fxColorCorrection then
+					fxColorCorrection.Brightness = ambienteState.colorCorrectionBrightness
+					fxColorCorrection.Contrast = ambienteState.colorCorrectionContrast
+					fxColorCorrection.Saturation = ambienteState.colorCorrectionSaturation
+					fxColorCorrection.TintColor = ambienteState.colorCorrectionTintColor
+				end
+				GUI.SetSliderBrilho(ambienteState.colorCorrectionBrightness)
+				GUI.SetSliderContraste(ambienteState.colorCorrectionContrast)
+				GUI.SetSliderSaturacao(ambienteState.colorCorrectionSaturation)
+				local tr = ambienteState.colorCorrectionTintColor.R * 255
+				local tg = ambienteState.colorCorrectionTintColor.G * 255
+				local tb = ambienteState.colorCorrectionTintColor.B * 255
+				GUI.AplicarTintRGB(tr, tg, tb)
+				GUI.SetSliderTr(tr); GUI.SetSliderTg(tg); GUI.SetSliderTb(tb)
+
+				if fxBloom then
+					fxBloom.Intensity = ambienteState.bloomIntensity
+					fxBloom.Size = ambienteState.bloomSize
+					fxBloom.Threshold = ambienteState.bloomThreshold
+				end
+				GUI.SetSliderBloomI(ambienteState.bloomIntensity)
+				GUI.SetSliderBloomS(ambienteState.bloomSize)
+				GUI.SetSliderBloomT(ambienteState.bloomThreshold)
+
+				if fxDof then
+					fxDof.FarIntensity = ambienteState.dofFarIntensity
+					fxDof.NearIntensity = ambienteState.dofNearIntensity
+					fxDof.FocusDistance = ambienteState.dofFocusDistance
+				end
+				GUI.SetSliderDofFar(ambienteState.dofFarIntensity)
+				GUI.SetSliderDofNear(ambienteState.dofNearIntensity)
+				GUI.SetSliderDofFocus(ambienteState.dofFocusDistance)
+
+				if fxAtmosphere then
+					fxAtmosphere.Density = ambienteState.atmosphereDensity
+					fxAtmosphere.Haze = ambienteState.atmosphereHaze
+					fxAtmosphere.Glare = ambienteState.atmosphereGlare
+				end
+				GUI.SetSliderAtmoDensity(ambienteState.atmosphereDensity)
+				GUI.SetSliderAtmoHaze(ambienteState.atmosphereHaze)
+				GUI.SetSliderAtmoGlare(ambienteState.atmosphereGlare)
+
+				-- Chuva
+				if dados.chuva then StartRain() else StopRain() end
+
+				-- Modo escuro
+				if dados.modoEscuro then _G.SkinChangerAtivarModoEscuro() else _G.SkinChangerDesativarModoEscuro() end
+
+				-- ----- Mira: ativa/desativa de verdade (antes so gravava a flag, sem religar nada) -----
+				if dados.mr then
+					local mira = Decodificar(dados.mr)
+					if GUI.CursorBox then GUI.CursorBox.Text = mira.cursorDecal or "" end
+					if GUI.FollowerBox then GUI.FollowerBox.Text = mira.followerDecal or "" end
+					GUI.FollowerOffsetX = mira.offX or GUI.FollowerOffsetX
+					GUI.FollowerOffsetY = mira.offY or GUI.FollowerOffsetY
+					GUI.FollowerSize = mira.size or GUI.FollowerSize
+					GUI.FollowerSpeed = mira.speed or GUI.FollowerSpeed
+					GUI.FollowerWobbleForca = mira.wobbleForca or GUI.FollowerWobbleForca
+					GUI.FollowerWobbleVel = mira.wobbleVel or GUI.FollowerWobbleVel
+
+					if mira.cursorAtivo and mira.cursorDecal and mira.cursorDecal ~= "" then
+						_G.SkinChangerAtivarCursorCustom(mira.cursorDecal)
+					else
+						_G.SkinChangerDesativarCursorCustom()
+					end
+
+					if mira.followerAtivo and mira.followerDecal and mira.followerDecal ~= "" then
+						_G.SkinChangerAtivarCursorFollower(mira.followerDecal)
+					else
+						_G.SkinChangerDesativarCursorFollower()
+					end
+
+					if mira.crosshairAtivo then
+						_G.SkinChangerAtivarCrosshairFollow()
+					else
+						_G.SkinChangerDesativarCrosshairFollow()
+					end
+				end
+
+				-- ----- Material (aba Textura): sincroniza o seletor pra bater com o state importado -----
+				for i, m in ipairs(materiaisDisponiveis) do
+					if m.valor == state.material then
+						materialIndexAtual = i
+						break
+					end
+				end
+				if materialLabel then materialLabel.Text = materiaisDisponiveis[materialIndexAtual].nome end
+				if GUI.MaterialPreviewPart then GUI.MaterialPreviewPart.Material = state.material end
+				if GUI.MaterialPreviewLbl then GUI.MaterialPreviewLbl.Text = materiaisDisponiveis[materialIndexAtual].nome end
+
+				-- Contador de kills: sincroniza a visibilidade do frame com o state importado
+				if GUI.ContadorKillsFrame then
+					GUI.ContadorKillsFrame.Visible = state.contadorKillsAtivo
+				end
+
+				-- Reaplica a skin nas armas equipadas/mochila com a config restaurada
+				pcall(verificarEAplicarSkins, true)
+			end)
+
+			if not okAplicar then
+				warn("[SkinChanger] Erro ao importar loadout: " .. tostring(erroAplicar))
+				GUI:Notify("Loadout", "Importou parcialmente, mas deu erro no meio: " .. tostring(erroAplicar) .. " (confira o Output/F9)", 8)
+				return
+			end
+
+			GUI:Notify("Loadout", "Importado e aplicado! Ambiente, mira, material, modo escuro e skins ja devem estar refletidos agora.", 6)
+		end)
+	end
+
+	CreateLabel(GUI.HolderConfig, "Extras de HUD:", 27)
+	CreateCheckbox(GUI.HolderConfig, "HUD Fofo", 28,
+		function() return state.hudFofoAtivo end,
+		function(v)
+			state.hudFofoAtivo = v
+			if GUI.AtualizarVisibilidadeHudFofo then GUI.AtualizarVisibilidadeHudFofo() end
+		end)
+	CreateLabel(GUI.HolderConfig, "Aparece por cima de tudo so enquanto voce estiver com uma arma na mao.", 29)
+
+	-- ================= MODO ESCURO (GUIs DO JOGO) =================
+	-- Escurece TODAS as GUIs do jogo (menos a nossa própria), deixando fundo escuro e
+	-- texto branco. É best-effort/heurístico: a gente não conhece a estrutura de cada
+	-- GUI do jogo, então só troca BackgroundColor3 (em quem já tem fundo visível) e
+	-- TextColor3 (em labels/botões/caixas de texto), guardando o valor original de
+	-- cada Instance pra poder desfazer depois. Funciona também em GUIs que abrem
+	-- DEPOIS de ativado (ex: um menu que só aparece ao morrer), via DescendantAdded.
+	-- Envolvido em do...end pra essas variaveis nao contarem pro limite de locais.
+	do
+		GUI.ModoEscuroAtivo = false
+		local originais = {} -- [Instance] = {BackgroundColor3 = Color3?, TextColor3 = Color3?}
+		local corFundo = Color3.fromRGB(18, 18, 22)
+		local corTexto = Color3.fromRGB(255, 255, 255)
+
+		local function EhDaNossaGui(inst)
+			local ok, resultado = pcall(function() return inst:IsDescendantOf(GUI.Screen) end)
+			return ok and resultado
+		end
+
+		local function EscurecerInstancia(inst)
+			if EhDaNossaGui(inst) then return end
+
+			local temFundo = inst:IsA("Frame") or inst:IsA("ScrollingFrame")
+				or inst:IsA("ImageLabel") or inst:IsA("ImageButton")
+				or inst:IsA("TextButton") or inst:IsA("TextBox")
+			if temFundo and inst.BackgroundTransparency < 1 then
+				originais[inst] = originais[inst] or {}
+				if originais[inst].BackgroundColor3 == nil then
+					originais[inst].BackgroundColor3 = inst.BackgroundColor3
+				end
+				pcall(function() inst.BackgroundColor3 = corFundo end)
+			end
+
+			local temTexto = inst:IsA("TextLabel") or inst:IsA("TextButton") or inst:IsA("TextBox")
+			if temTexto then
+				originais[inst] = originais[inst] or {}
+				if originais[inst].TextColor3 == nil then
+					originais[inst].TextColor3 = inst.TextColor3
+				end
+				pcall(function() inst.TextColor3 = corTexto end)
+			end
+		end
+
+		local function EscurecerTudo()
+			local playerGui = player:FindFirstChild("PlayerGui")
+			if not playerGui then return end
+			for _, inst in ipairs(playerGui:GetDescendants()) do
+				EscurecerInstancia(inst)
+			end
+		end
+
+		local function RestaurarTudo()
+			for inst, original in pairs(originais) do
+				if inst and inst.Parent then
+					pcall(function()
+						if original.BackgroundColor3 then inst.BackgroundColor3 = original.BackgroundColor3 end
+						if original.TextColor3 then inst.TextColor3 = original.TextColor3 end
+					end)
+				end
+			end
+			originais = {}
+		end
+
+		local conexaoNovasGuis = nil
+
+		-- Globais (_G) de proposito, pra poder ser chamadas pelo Loadout (que precisa
+		-- reaplicar tudo de verdade na hora de importar) sem precisar de mais uma local.
+		function _G.SkinChangerAtivarModoEscuro()
+			GUI.ModoEscuroAtivo = true
+			EscurecerTudo()
+
+			local playerGui = player:FindFirstChild("PlayerGui")
+			if playerGui and not conexaoNovasGuis then
+				-- Pega GUIs/elementos que aparecem DEPOIS de ativado (ex: tela de morte, popup).
+				-- task.defer espera a instância terminar de ser configurada antes de escurecer,
+				-- senão a gente escurece antes do jogo terminar de setar a cor "certa" dele.
+				conexaoNovasGuis = playerGui.DescendantAdded:Connect(function(inst)
+					if GUI.ModoEscuroAtivo then
+						task.defer(EscurecerInstancia, inst)
+					end
+				end)
+			end
+		end
+
+		function _G.SkinChangerDesativarModoEscuro()
+			GUI.ModoEscuroAtivo = false
+			RestaurarTudo()
+		end
+
+		CreateCheckbox(GUI.HolderConfig, "Modo escuro (escurece todas as GUIs do jogo, texto branco)", 25,
+			function() return GUI.ModoEscuroAtivo end,
+			function(v)
+				if v then _G.SkinChangerAtivarModoEscuro() else _G.SkinChangerDesativarModoEscuro() end
+			end)
+		CreateLabel(GUI.HolderConfig, "Best-effort: escurece fundo e deixa texto branco em qualquer GUI do jogo, incluindo as que abrirem depois.", 26)
+	end
+
+	-- ================= CURSOR CUSTOMIZADO + CROSSHAIR =================
+	-- Limpa GUIs de uma execucao anterior do script (Ctrl+Enter de novo no Studio
+	-- deixaria duas por cima uma da outra, senao).
+	do
+		local playerGuiInicial = player:FindFirstChild("PlayerGui")
+		if playerGuiInicial then
+			local antigoCursor = playerGuiInicial:FindFirstChild("SkinChangerCursor")
+			if antigoCursor then antigoCursor:Destroy() end
+			local antigaCrosshair = playerGuiInicial:FindFirstChild("SkinChangerCrosshair")
+			if antigaCrosshair then antigaCrosshair:Destroy() end
+		end
+	end
+
+	do
+		-- Aceita ID puro (ex: 123456) ou ja formatado (rbxassetid://123456)
+		local function SanitizarAssetIdCursor(texto)
+			if texto == "" then return "" end
+			if texto:match("^rbxassetid://%d+$") then return texto end
+			local num = texto:match("(%d+)")
+			if num then return "rbxassetid://" .. num end
+			return ""
+		end
+
+		-- --------- CURSOR CUSTOMIZADO (o "balaozinho" seguindo o mouse) ---------
+		-- So a imagem seguindo o mouse, sem seta/label - exatamente o pedido: um
+		-- balaozinho (ImageLabel) com a decal escolhida, no lugar do cursor nativo.
+		GUI.CursorCustomAtivo = false
+
+		function _G.SkinChangerDesativarCursorCustom()
+			if GUI.CursorConn then GUI.CursorConn:Disconnect(); GUI.CursorConn = nil end
+			if GUI.CursorMouseIconConn then GUI.CursorMouseIconConn:Disconnect(); GUI.CursorMouseIconConn = nil end
+			if GUI.CursorGuiInst then GUI.CursorGuiInst:Destroy(); GUI.CursorGuiInst = nil end
+			GUI.CursorImagem = nil
+			UserInputService.MouseIconEnabled = true
+			GUI.CursorCustomAtivo = false
+		end
+
+		function _G.SkinChangerAtivarCursorCustom(decalId)
+			_G.SkinChangerDesativarCursorCustom()
+			local playerGui = player:WaitForChild("PlayerGui")
+
+			UserInputService.MouseIconEnabled = false
+
+			GUI.CursorGuiInst = Instance.new("ScreenGui")
+			GUI.CursorGuiInst.Name = "SkinChangerCursor"
+			GUI.CursorGuiInst.ResetOnSpawn = false
+			GUI.CursorGuiInst.IgnoreGuiInset = false
+			GUI.CursorGuiInst.DisplayOrder = 999
+			GUI.CursorGuiInst.Parent = playerGui
+
+			GUI.CursorImagem = Instance.new("ImageLabel")
+			GUI.CursorImagem.AnchorPoint = Vector2.new(0.5, 0.5)
+			GUI.CursorImagem.Size = UDim2.new(0, 32, 0, 32)
+			GUI.CursorImagem.BackgroundTransparency = 1
+			GUI.CursorImagem.Image = decalId
+			GUI.CursorImagem.Parent = GUI.CursorGuiInst
+
+			GUI.CursorConn = UserInputService.InputChanged:Connect(function(input)
+				if input.UserInputType == Enum.UserInputType.MouseMovement then
+					GUI.CursorImagem.Position = UDim2.new(0, input.Position.X, 0, input.Position.Y)
+				end
+			end)
+
+			-- Alguns jogos forcam MouseIconEnabled = true de novo (ex: ao entrar/sair de mira
+			-- de arma com scope). Sem isso, o cursor nativo do Roblox reaparecia por cima do
+			-- nosso assim que o jogo mexesse nessa propriedade. Reforca de volta pra false
+			-- sempre que alguem mudar, em vez de confiar que so setamos uma vez e acabou.
+			GUI.CursorMouseIconConn = UserInputService:GetPropertyChangedSignal("MouseIconEnabled"):Connect(function()
+				if GUI.CursorCustomAtivo and UserInputService.MouseIconEnabled then
+					UserInputService.MouseIconEnabled = false
+				end
+			end)
+
+			GUI.CursorCustomDecalId = decalId
+			GUI.CursorCustomAtivo = true
+		end
+
+		CreateLabel(GUI.HolderMira, "Cursor customizado:", 1)
+		local cursorBox = CreateTextInput(GUI.HolderMira, "Decal ID do cursor (rbxassetid://... ou so o numero)", 2)
+		GUI.CursorBox = cursorBox
+		CreateCheckbox(GUI.HolderMira, "Ativar cursor customizado", 3,
+			function() return GUI.CursorCustomAtivo end,
+			function(v)
+				if v then
+					local id = SanitizarAssetIdCursor(cursorBox.Text)
+					if id == "" then
+						GUI:Notify("Cursor", "Cole um Decal ID antes de ativar.", 3)
+						return
+					end
+					_G.SkinChangerAtivarCursorCustom(id)
+				else
+					_G.SkinChangerDesativarCursorCustom()
+				end
+			end)
+
+		-- --------- CURSOR FOLLOWER (decal com atraso + balanco seguindo o mouse) ---------
+		-- Diferente do cursor customizado (que segue 1:1): esse aqui atrasa um pouco atras do
+		-- mouse e balanca (wobble) baseado na velocidade horizontal, tipo um bichinho seguindo.
+		-- Tudo global/via GUI de proposito, pra nao gastar variavel local (script no limite de 200).
+		GUI.FollowerOffsetX = 25
+		GUI.FollowerOffsetY = 10
+		GUI.FollowerSize = 40
+		GUI.FollowerSpeed = 8
+		GUI.FollowerWobbleForca = 15
+		GUI.FollowerWobbleVel = 6
+
+		function _G.SkinChangerDesativarCursorFollower()
+			if GUI.FollowerConn then GUI.FollowerConn:Disconnect(); GUI.FollowerConn = nil end
+			if GUI.FollowerGui then GUI.FollowerGui:Destroy(); GUI.FollowerGui = nil end
+			GUI.FollowerImagem = nil
+			GUI.FollowerAtivo = false
+		end
+
+		function _G.SkinChangerAtivarCursorFollower(decalId)
+			_G.SkinChangerDesativarCursorFollower()
+			local playerGui = player:WaitForChild("PlayerGui")
+
+			GUI.FollowerGui = Instance.new("ScreenGui")
+			GUI.FollowerGui.Name = "SkinChangerCursorFollower"
+			GUI.FollowerGui.ResetOnSpawn = false
+			GUI.FollowerGui.IgnoreGuiInset = false
+			GUI.FollowerGui.DisplayOrder = 999
+			GUI.FollowerGui.Parent = playerGui
+
+			GUI.FollowerImagem = Instance.new("ImageLabel")
+			GUI.FollowerImagem.BackgroundTransparency = 1
+			GUI.FollowerImagem.Size = UDim2.fromOffset(GUI.FollowerSize, GUI.FollowerSize)
+			GUI.FollowerImagem.AnchorPoint = Vector2.new(0.5, 0.5)
+			GUI.FollowerImagem.Image = decalId
+			GUI.FollowerImagem.ScaleType = Enum.ScaleType.Fit
+			GUI.FollowerImagem.Parent = GUI.FollowerGui
+
+			local mouseStart = UserInputService:GetMouseLocation()
+			GUI.FollowerPos = Vector2.new(mouseStart.X + GUI.FollowerOffsetX, mouseStart.Y + GUI.FollowerOffsetY)
+			GUI.FollowerImagem.Position = UDim2.fromOffset(GUI.FollowerPos.X, GUI.FollowerPos.Y)
+			GUI.FollowerRot = 0
+			GUI.FollowerLastPos = GUI.FollowerPos
+
+			GUI.FollowerConn = RunService.Heartbeat:Connect(function(dt)
+				local mouseLoc = UserInputService:GetMouseLocation()
+				local targetPos = Vector2.new(mouseLoc.X + GUI.FollowerOffsetX, mouseLoc.Y + GUI.FollowerOffsetY)
+
+				local alpha = 1 - math.exp(-GUI.FollowerSpeed * dt)
+				GUI.FollowerPos = GUI.FollowerPos:Lerp(targetPos, alpha)
+
+				local deltaX = GUI.FollowerPos.X - GUI.FollowerLastPos.X
+				local targetRot = math.clamp(deltaX * 3, -GUI.FollowerWobbleForca, GUI.FollowerWobbleForca)
+				local rotAlpha = 1 - math.exp(-GUI.FollowerWobbleVel * dt)
+				GUI.FollowerRot = GUI.FollowerRot + (targetRot - GUI.FollowerRot) * rotAlpha
+				GUI.FollowerLastPos = GUI.FollowerPos
+
+				GUI.FollowerImagem.Position = UDim2.fromOffset(GUI.FollowerPos.X, GUI.FollowerPos.Y)
+				GUI.FollowerImagem.Rotation = GUI.FollowerRot
+			end)
+
+			GUI.FollowerAtivo = true
+		end
+
+		CreateLabel(GUI.HolderMira, "Cursor Follower (decal separado, com atraso/balanco seguindo o mouse):", 4)
+		GUI.FollowerBox = CreateTextInput(GUI.HolderMira, "Decal ID do cursor follower (rbxassetid://... ou so o numero)", 5)
+		CreateCheckbox(GUI.HolderMira, "Ativar cursor follower", 6,
+			function() return GUI.FollowerAtivo end,
+			function(v)
+				if v then
+					local id = SanitizarAssetIdCursor(GUI.FollowerBox.Text)
+					if id == "" then
+						GUI:Notify("Cursor Follower", "Cole um Decal ID antes de ativar.", 3)
+						return
+					end
+					_G.SkinChangerAtivarCursorFollower(id)
+				else
+					_G.SkinChangerDesativarCursorFollower()
+				end
+			end)
+		CreateLabel(GUI.HolderMira, "Fica um pouco atras do mouse com um leve balanco - diferente do cursor customizado, que segue 1:1.", 7)
+
+		CreateRangeSlider(GUI.HolderMira, "Deslocamento X", -80, 80, GUI.FollowerOffsetX, 0, 8, function(v)
+			GUI.FollowerOffsetX = v
+		end)
+		CreateRangeSlider(GUI.HolderMira, "Deslocamento Y", -80, 80, GUI.FollowerOffsetY, 0, 9, function(v)
+			GUI.FollowerOffsetY = v
+		end)
+		CreateRangeSlider(GUI.HolderMira, "Tamanho", 8, 120, GUI.FollowerSize, 0, 10, function(v)
+			GUI.FollowerSize = v
+			if GUI.FollowerImagem then
+				GUI.FollowerImagem.Size = UDim2.fromOffset(v, v)
+			end
+		end)
+		CreateRangeSlider(GUI.HolderMira, "Velocidade (quao rapido alcanca o mouse)", 1, 25, GUI.FollowerSpeed, 0, 11, function(v)
+			GUI.FollowerSpeed = v
+		end)
+		CreateRangeSlider(GUI.HolderMira, "Forca do balanco", 0, 45, GUI.FollowerWobbleForca, 0, 12, function(v)
+			GUI.FollowerWobbleForca = v
+		end)
+		CreateRangeSlider(GUI.HolderMira, "Velocidade do balanco", 1, 20, GUI.FollowerWobbleVel, 0, 13, function(v)
+			GUI.FollowerWobbleVel = v
+		end)
+
+		-- --------- CROSSHAIR SEGUE O MOUSE ---------
+		-- Caminho exato: PlayerGui.CrosshairGui.ScopeFrame.Cursor. Em vez de trocar a imagem,
+		-- essa versao faz esse objeto seguir a posicao do mouse na tela em tempo real.
+		local crosshairFollowConn, crosshairCursorObj, crosshairPosOriginal = nil, nil, nil
+		GUI.CrosshairFollowAtiva = false
+
+		local function EncontrarCursorDoJogo()
+			local playerGui = player:FindFirstChild("PlayerGui")
+			if not playerGui then return nil end
+			local crosshairGui = playerGui:FindFirstChild("CrosshairGui")
+			if not crosshairGui then return nil end
+			local scopeFrame = crosshairGui:FindFirstChild("ScopeFrame")
+			if not scopeFrame then return nil end
+			return scopeFrame:FindFirstChild("Cursor")
+		end
+
+		local function DesativarCrosshairFollow()
+			if crosshairFollowConn then crosshairFollowConn:Disconnect(); crosshairFollowConn = nil end
+			if crosshairCursorObj and crosshairPosOriginal then
+				pcall(function() crosshairCursorObj.Position = crosshairPosOriginal end)
+			end
+			crosshairCursorObj = nil
+			crosshairPosOriginal = nil
+			GUI.CrosshairFollowAtiva = false
+		end
+		_G.SkinChangerDesativarCrosshairFollow = DesativarCrosshairFollow
+
+		local function AtivarCrosshairFollow()
+			DesativarCrosshairFollow()
+			local cursorObj = EncontrarCursorDoJogo()
+			if not cursorObj then
+				GUI:Notify("Crosshair", "Nao achei PlayerGui.CrosshairGui.ScopeFrame.Cursor - confira se ja ta com a arma/mira ativa.", 5)
+				return
+			end
+
+			crosshairCursorObj = cursorObj
+			crosshairPosOriginal = cursorObj.Position
+			GUI.CrosshairFollowAtiva = true
+
+			-- O proprio jogo pode DESTRUIR e RECRIAR o Cursor (ex: ao entrar/sair de scope de
+			-- uma arma) - antes, quando isso acontecia, a gente desativava a feature inteira
+			-- (o Parent sumia -> DesativarCrosshairFollow()), e a mira "voltava ao original"
+			-- sozinha sem voce ter desligado nada. Agora, se o objeto sumir, tenta achar o novo
+			-- automaticamente a cada frame em vez de desistir - so desativa de vez se voce
+			-- desmarcar o checkbox.
+			crosshairFollowConn = RunService.Heartbeat:Connect(function()
+				if not crosshairCursorObj or not crosshairCursorObj.Parent then
+					local novoObj = EncontrarCursorDoJogo()
+					if novoObj then
+						crosshairCursorObj = novoObj
+						crosshairPosOriginal = novoObj.Position
+					else
+						return -- ainda nao achou (ex: transicao de entrar/sair da mira) - tenta de novo no proximo frame
+					end
+				end
+				local mouseLoc = UserInputService:GetMouseLocation()
+				local parentFrame = crosshairCursorObj.Parent
+				local relativoX = mouseLoc.X - parentFrame.AbsolutePosition.X
+				local relativoY = mouseLoc.Y - parentFrame.AbsolutePosition.Y
+				crosshairCursorObj.Position = UDim2.new(0, relativoX, 0, relativoY)
+			end)
+
+			GUI:Notify("Crosshair", "Crosshair agora segue o mouse.", 3)
+		end
+		_G.SkinChangerAtivarCrosshairFollow = AtivarCrosshairFollow
+
+		CreateCheckbox(GUI.HolderMira, "Crosshair segue o mouse", 14,
+			function() return GUI.CrosshairFollowAtiva end,
+			function(v)
+				if v then AtivarCrosshairFollow() else DesativarCrosshairFollow() end
+			end)
+		CreateLabel(GUI.HolderMira, "Faz PlayerGui.CrosshairGui.ScopeFrame.Cursor seguir o mouse em vez de ficar fixo/centralizado.", 15)
+	end
+
+	-- ================= ABA: TRACERS =================
+	-- O preset "Arco-iris" antigo só aplicava 3 cores fixas (vermelho/verde/azul) e
+	-- nunca mudava depois disso. Isso aqui faz um arco-íris de verdade: enquanto
+	-- ativo, o hue gira continuamente a cada frame e recolore taser/sniper/bala com
+	-- uma leve defasagem entre eles (fica mais bonito que os três na mesma cor).
+	-- Declarado aqui em cima pra poder ser chamado pelos color pickers manuais logo
+	-- abaixo (editar uma cor na mão desativa o arco-íris, senão ele sobrescreveria
+	-- a escolha no frame seguinte).
+	local arcoIrisConn = nil
+
+	local function PararArcoIris()
+		if arcoIrisConn then
+			arcoIrisConn:Disconnect()
+			arcoIrisConn = nil
+		end
+	end
+
+	local function IniciarArcoIris()
+		PararArcoIris()
+		arcoIrisConn = RunService.Heartbeat:Connect(function()
+			local hue = (tick() * 0.15) % 1
+			tracerState.taserColor = Color3.fromHSV(hue, 1, 1)
+			tracerState.sniperColor = Color3.fromHSV((hue + 0.33) % 1, 1, 1)
+			tracerState.bulletColor = Color3.fromHSV((hue + 0.66) % 1, 1, 1)
+		end)
+	end
+
+	CreateLabel(GUI.HolderTracers, "Personalizar cores dos tracers:", 1)
+	CreateLabel(GUI.HolderTracers, "Muda a cor dos raios das armas (taser, sniper, bala).", 2)
+
+	local tracerToggleRow = CreateCheckbox(GUI.HolderTracers, "Ativar cores customizadas", 3,
+		function() return tracerState.ativado end,
+		function(v)
+			if v then AtivarTracerHooks() else DesativarTracerHooks() end
+		end
+	)
+
+	local function CreateTracerColorPicker(parent, labelText, corInicial, order, onChange)
+		CreateLabel(parent, labelText, order)
+
+		local previewFrame = Instance.new("Frame")
+		previewFrame.Size = UDim2.new(1, 0, 0, 30)
+		previewFrame.BackgroundColor3 = corInicial
+		previewFrame.LayoutOrder = order + 1
+		previewFrame.Parent = parent
+		Instance.new("UICorner", previewFrame).CornerRadius = UDim.new(0, 8)
+
+		local h, s, vv = corInicial:ToHSV()
+
+		local tHexBox = CreateTextInput(parent, "HEX (ex: 00EAFF)", order + 2)
+
+		tHexBox.FocusLost:Connect(function(enterPressed)
+			if enterPressed and tHexBox.Text ~= "" then
+				local color = SafeHex(tHexBox.Text)
+				if color then
+					h, s, vv = color:ToHSV()
+					previewFrame.BackgroundColor3 = color
+					onChange(color)
+					GUI:Notify("Tracers", labelText .. " atualizada.", 2)
+				else
+					GUI:Notify("Tracers", "HEX invalido.", 2)
+				end
+			end
+		end)
+
+		local bar = Instance.new("Frame")
+		bar.Size = UDim2.new(1, 0, 0, 16)
+		bar.LayoutOrder = order + 3
+		bar.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		bar.BorderSizePixel = 0
+		bar.Parent = parent
+		Instance.new("UICorner", bar).CornerRadius = UDim.new(0, 8)
+
+		local hg = Instance.new("UIGradient")
+		hg.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 0, 0)),
+			ColorSequenceKeypoint.new(0.166, Color3.fromRGB(255, 255, 0)),
+			ColorSequenceKeypoint.new(0.333, Color3.fromRGB(0, 255, 0)),
+			ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 255, 255)),
+			ColorSequenceKeypoint.new(0.666, Color3.fromRGB(0, 0, 255)),
+			ColorSequenceKeypoint.new(0.833, Color3.fromRGB(255, 0, 255)),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 0, 0)),
+		})
+		hg.Parent = bar
+
+		local indicador = Instance.new("Frame")
+		indicador.Size = UDim2.new(0, 4, 1, 4)
+		indicador.AnchorPoint = Vector2.new(0.5, 0.5)
+		indicador.Position = UDim2.new(h, 0, 0.5, 0)
+		indicador.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		indicador.BorderSizePixel = 0
+		indicador.ZIndex = 2
+		indicador.Parent = bar
+		Instance.new("UICorner", indicador).CornerRadius = UDim.new(0, 2)
+		local is3 = Instance.new("UIStroke")
+		is3.Color = Color3.fromRGB(0, 0, 0); is3.Thickness = 1; is3.Parent = indicador
+
+		local tDragging = false
+
+		local function AtualizarTracerPorInput(inputPos)
+			local relX = math.clamp((inputPos.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
+			h = relX
+			indicador.Position = UDim2.new(h, 0, 0.5, 0)
+			local cor = Color3.fromHSV(h, s, vv)
+			previewFrame.BackgroundColor3 = cor
+			onChange(cor)
+		end
+
+		bar.InputBegan:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+				tDragging = true
+				-- Responde já no clique (antes só reagia ao arrastar, o que parecia "não funcionar").
+				AtualizarTracerPorInput(input.Position)
+			end
+		end)
+		bar.InputEnded:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+				tDragging = false
+			end
+		end)
+
+		UserInputService.InputChanged:Connect(function(input)
+			if tDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+				AtualizarTracerPorInput(input.Position)
+			end
+		end)
+
+		return order + 4
+	end
+
+	local nextOrder = 5
+
+	nextOrder = CreateTracerColorPicker(GUI.HolderTracers, "Cor do Taser:", tracerState.taserColor, nextOrder, function(cor)
+		PararArcoIris()
+		tracerState.taserColor = cor
+	end)
+
+	nextOrder = CreateTracerColorPicker(GUI.HolderTracers, "Cor do Sniper:", tracerState.sniperColor, nextOrder, function(cor)
+		PararArcoIris()
+		tracerState.sniperColor = cor
+	end)
+
+	nextOrder = CreateTracerColorPicker(GUI.HolderTracers, "Cor da Bala:", tracerState.bulletColor, nextOrder, function(cor)
+		PararArcoIris()
+		tracerState.bulletColor = cor
+	end)
+
+	nextOrder = nextOrder + 1
+	CreateLabel(GUI.HolderTracers, "Presets rapidos:", nextOrder)
+	nextOrder = nextOrder + 1
+
+	local tracerPresets = {
+		{nome = "Padrao", taser = Color3.fromRGB(0, 234, 255), sniper = Color3.fromRGB(150, 150, 150), bullet = Color3.fromRGB(255, 255, 0)},
+		{nome = "Vermelho", taser = Color3.fromRGB(255, 50, 50), sniper = Color3.fromRGB(255, 80, 80), bullet = Color3.fromRGB(255, 0, 0)},
+		{nome = "Verde", taser = Color3.fromRGB(50, 255, 50), sniper = Color3.fromRGB(80, 255, 80), bullet = Color3.fromRGB(0, 255, 0)},
+		{nome = "Roxo", taser = Color3.fromRGB(180, 50, 255), sniper = Color3.fromRGB(200, 100, 255), bullet = Color3.fromRGB(150, 0, 255)},
+		{nome = "Branco", taser = Color3.fromRGB(255, 255, 255), sniper = Color3.fromRGB(255, 255, 255), bullet = Color3.fromRGB(255, 255, 255)},
+		{nome = "Arco-iris", taser = nil, sniper = nil, bullet = nil}, -- especial: não é cor fixa, liga o loop abaixo
+	}
+
+	local tracerPresetsGrid = Instance.new("Frame")
+	tracerPresetsGrid.BackgroundTransparency = 1
+	tracerPresetsGrid.Size = UDim2.new(1, 0, 0, 0)
+	tracerPresetsGrid.LayoutOrder = nextOrder
+	tracerPresetsGrid.Parent = GUI.HolderTracers
+	local tpLayout = Instance.new("UIGridLayout")
+	tpLayout.CellSize = UDim2.new(0, 100, 0, 32)
+	tpLayout.CellPadding = UDim2.new(0, 6, 0, 6)
+	tpLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	tpLayout.Parent = tracerPresetsGrid
+	ManageSizeFromLayout(tracerPresetsGrid, tpLayout)
+
+	for i, preset in ipairs(tracerPresets) do
+		local ehArcoIris = (preset.nome == "Arco-iris")
+
+		local btn = Instance.new("TextButton")
+		btn.BackgroundColor3 = ehArcoIris and Color3.fromRGB(255, 0, 170) or preset.taser
+		btn.BackgroundTransparency = 0.35
+		btn.Text = preset.nome
+		btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		btn.Font = Enum.Font.GothamBold
+		btn.TextSize = 11
+		btn.AutoButtonColor = false
+		btn.LayoutOrder = i
+		btn.Parent = tracerPresetsGrid
+		Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+		local st = Instance.new("UIStroke")
+		st.Color = Color3.fromRGB(255, 255, 255); st.Transparency = 0.7; st.Thickness = 1; st.Parent = btn
+
+		if ehArcoIris then
+			btn.MouseButton1Click:Connect(function()
+				if arcoIrisConn then
+					PararArcoIris()
+					GUI:Notify("Tracers", "Arco-iris desativado.", 2)
+				else
+					IniciarArcoIris()
+					GUI:Notify("Tracers", "Arco-iris ativado! As cores vao girar continuamente.", 2)
+				end
+			end)
+		else
+			btn.MouseButton1Click:Connect(function()
+				PararArcoIris() -- escolher um preset fixo cancela o arco-íris, senão ele sobrescreve de novo no próximo frame
+				tracerState.taserColor = preset.taser
+				tracerState.sniperColor = preset.sniper
+				tracerState.bulletColor = preset.bullet
+				GUI:Notify("Tracers", "Preset '"..preset.nome.."' aplicado.", 2)
+			end)
+		end
+	end
+
+	nextOrder = nextOrder + 1
+	CreateLabel(GUI.HolderTracers, "Material:", nextOrder)
+	nextOrder = nextOrder + 1
+
+	local materialTracerRow = Instance.new("Frame")
+	materialTracerRow.Size = UDim2.new(1, 0, 0, 32)
+	materialTracerRow.BackgroundTransparency = 1
+	materialTracerRow.LayoutOrder = nextOrder
+	materialTracerRow.Parent = GUI.HolderTracers
+	local materialTracerLayout = Instance.new("UIListLayout")
+	materialTracerLayout.FillDirection = Enum.FillDirection.Horizontal
+	materialTracerLayout.Padding = UDim.new(0, 8)
+	materialTracerLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	materialTracerLayout.Parent = materialTracerRow
+	nextOrder = nextOrder + 1
+
+	local function CreateMaterialTracerButton(text, valor)
+		local btn = Instance.new("TextButton")
+		btn.Size = UDim2.new(0.5, -4, 1, 0)
+		btn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		btn.BackgroundTransparency = (tracerState.material == valor) and 0.3 or 0.88
+		btn.Text = text
+		btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		btn.Font = Enum.Font.GothamBold
+		btn.TextSize = 12
+		btn.AutoButtonColor = false
+		btn.Parent = materialTracerRow
+		Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+		return btn
+	end
+
+	local btnMaterialNeon = CreateMaterialTracerButton("Neon (padrao)", Enum.Material.Neon)
+	local btnMaterialForceField = CreateMaterialTracerButton("ForceField", Enum.Material.ForceField)
+
+	local function AtualizarBotoesMaterialTracer()
+		btnMaterialNeon.BackgroundTransparency = (tracerState.material == Enum.Material.Neon) and 0.3 or 0.88
+		btnMaterialForceField.BackgroundTransparency = (tracerState.material == Enum.Material.ForceField) and 0.3 or 0.88
+	end
+
+	btnMaterialNeon.MouseButton1Click:Connect(function()
+		tracerState.material = Enum.Material.Neon
+		AtualizarBotoesMaterialTracer()
+	end)
+	btnMaterialForceField.MouseButton1Click:Connect(function()
+		tracerState.material = Enum.Material.ForceField
+		AtualizarBotoesMaterialTracer()
+	end)
+
+	local _, setSliderGrossura = CreateRangeSlider(GUI.HolderTracers, "Grossura", 0.3, 5, tracerState.grossura, 1, nextOrder, function(v)
+		tracerState.grossura = v
+	end)
+	nextOrder = nextOrder + 1
+
+	local _, setSliderTransparenciaTracer = CreateRangeSlider(GUI.HolderTracers, "Transparencia", 0, 1, tracerState.transparencia, 2, nextOrder, function(v)
+		tracerState.transparencia = v
+	end)
+	nextOrder = nextOrder + 1
+
+	CreateLabel(GUI.HolderTracers, "Estilo do desaparecimento:", nextOrder)
+	nextOrder = nextOrder + 1
+	CreateCheckbox(GUI.HolderTracers, "Fade suave (estilo hack)", nextOrder,
+		function() return tracerState.fadeSuave end,
+		function(v) tracerState.fadeSuave = v end
+	)
+	nextOrder = nextOrder + 1
+	CreateLabel(GUI.HolderTracers, "Em vez de sumir seco, o tracer segura visivel um pouco e desaparece suavemente.", nextOrder)
+
+	-- ================= BOTAO APLICAR =================
+	GUI.ApplyBtn = Instance.new("TextButton")
+	GUI.ApplyBtn.AnchorPoint = Vector2.new(0.5, 1)
+	GUI.ApplyBtn.Position = UDim2.new(0.5, 0, 1, -40)
+	GUI.ApplyBtn.Size = UDim2.new(1, -30, 0, 40)
+	GUI.ApplyBtn.BackgroundColor3 = Color3.fromRGB(255, 105, 180)
+	GUI.ApplyBtn.BackgroundTransparency = 0.2
+	GUI.ApplyBtn.Text = "Aplicar Skin"
+	GUI.ApplyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	GUI.ApplyBtn.Font = Enum.Font.GothamBold
+	GUI.ApplyBtn.TextSize = 16
+	GUI.ApplyBtn.AutoButtonColor = false
+	GUI.ApplyBtn.Parent = GUI.Main
+	Instance.new("UICorner", GUI.ApplyBtn).CornerRadius = UDim.new(0, 10)
+
+	-- FOOTER
+	GUI.Footer = Instance.new("TextLabel")
+	GUI.Footer.AnchorPoint = Vector2.new(0.5, 1)
+	GUI.Footer.Position = UDim2.new(0.5, 0, 1, -8)
+	GUI.Footer.Size = UDim2.new(1, -30, 0, 16)
+	GUI.Footer.BackgroundTransparency = 1
+	GUI.Footer.Text = "v2.1"
+	GUI.Footer.TextColor3 = Color3.fromRGB(150, 150, 150)
+	GUI.Footer.TextSize = 12
+	GUI.Footer.Font = Enum.Font.Gotham
+	GUI.Footer.TextXAlignment = Enum.TextXAlignment.Right
+	GUI.Footer.Parent = GUI.Main
+
+	-- ================= DRAG =================
+	local dragging, dragStart, startPos
+	GUI.TitleBar.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true; dragStart = input.Position; startPos = GUI.Main.Position
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then dragging = false end
+			end)
+		end
+	end)
+	GUI.TitleBar.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local delta = input.Position - dragStart
+			GUI.Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+		end
+	end)
+
+	-- ================= TOGGLE =================
+	local menuOpen = true
+	local function ToggleMenu()
+		menuOpen = not menuOpen
+		GUI.Main.Visible = menuOpen
+	end
+
+	GUI.CloseBtn.MouseButton1Click:Connect(function() menuOpen = false; GUI.Main.Visible = false end)
+
+	UserInputService.InputBegan:Connect(function(input, gp)
+		if gp then return end
+		if input.KeyCode == Enum.KeyCode.M then ToggleMenu() end
+	end)
+
+	-- ================= NOTIFICATIONS =================
+	GUI.NotifHolder = Instance.new("Frame")
+	GUI.NotifHolder.AnchorPoint = Vector2.new(1, 1)
+	GUI.NotifHolder.Position = UDim2.new(1, -20, 1, -20)
+	GUI.NotifHolder.Size = UDim2.new(0, 280, 1, -40)
+	GUI.NotifHolder.BackgroundTransparency = 1
+	GUI.NotifHolder.Parent = GUI.Screen
+	local nl = Instance.new("UIListLayout")
+	nl.VerticalAlignment = Enum.VerticalAlignment.Bottom
+	nl.HorizontalAlignment = Enum.HorizontalAlignment.Right
+	nl.Padding = UDim.new(0, 8)
+	nl.SortOrder = Enum.SortOrder.LayoutOrder
+	nl.Parent = GUI.NotifHolder
+
+	function GUI:Notify(title, text, duration)
+		duration = duration or 3
+		local notif = Instance.new("Frame")
+		notif.Size = UDim2.new(1, 0, 0, 70)
+		notif.BackgroundColor3 = Color3.fromRGB(27, 27, 27)
+		notif.BackgroundTransparency = 0.1
+		notif.BorderSizePixel = 0
+		notif.ClipsDescendants = true
+		notif.Parent = GUI.NotifHolder
+		Instance.new("UICorner", notif).CornerRadius = UDim.new(0, 10)
+		local ns = Instance.new("UIStroke"); ns.Color = Color3.fromRGB(255,255,255); ns.Transparency = 0.85; ns.Thickness = 1; ns.Parent = notif
+		local ng = Instance.new("UIGradient"); ng.Rotation = 90; ng.Color = ColorSequence.new(Color3.fromRGB(60,60,60), Color3.fromRGB(15,15,15)); ng.Parent = notif
+
+		local tl = Instance.new("TextLabel")
+		tl.BackgroundTransparency = 1; tl.Position = UDim2.new(0, 15, 0, 8)
+		tl.Size = UDim2.new(1, -30, 0, 20); tl.Text = title
+		tl.TextColor3 = Color3.fromRGB(255,255,255); tl.Font = Enum.Font.GothamBold
+		tl.TextSize = 16; tl.TextXAlignment = Enum.TextXAlignment.Left; tl.Parent = notif
+
+		local tx = Instance.new("TextLabel")
+		tx.BackgroundTransparency = 1; tx.Position = UDim2.new(0, 15, 0, 30)
+		tx.Size = UDim2.new(1, -30, 0, 35); tx.Text = text
+		tx.TextColor3 = Color3.fromRGB(200,200,200); tx.Font = Enum.Font.Gotham
+		tx.TextSize = 13; tx.TextWrapped = true
+		tx.TextXAlignment = Enum.TextXAlignment.Left; tx.Parent = notif
+
+		local bar = Instance.new("Frame")
+		bar.Size = UDim2.new(1, 0, 0, 3); bar.Position = UDim2.new(0, 0, 1, -3)
+		bar.BackgroundColor3 = Color3.fromRGB(255,255,255); bar.BackgroundTransparency = 0.5
+		bar.BorderSizePixel = 0; bar.Parent = notif
+		Instance.new("UICorner", bar).CornerRadius = UDim.new(1, 0)
+
+		TweenService:Create(bar, TweenInfo.new(duration, Enum.EasingStyle.Linear), { Size = UDim2.new(0, 0, 0, 3) }):Play()
+
+		spawn(function()
+			wait(duration)
+			pcall(function()
+				TweenService:Create(notif, TweenInfo.new(0.3), { BackgroundTransparency = 1 }):Play()
+				for _, child in ipairs(notif:GetDescendants()) do
+					if child:IsA("TextLabel") then
+						TweenService:Create(child, TweenInfo.new(0.3), { TextTransparency = 1 }):Play()
+					end
+				end
+				wait(0.3)
+				notif:Destroy()
+			end)
+		end)
+	end
+
+	-- ================= KILLFEED (BACKEND) =================
+	-- Le ReplicatedStorage.Killfeed: cada kill vira um IntValue cujo NOME e a mensagem pronta,
+	-- ex: "Franciscoll (@lucasgamer6yio) killed GaBrIeL062 with Remington 870".
+	-- Guarda os ultimos kills, dispara sons de killstreak (estilo Quake/UT) e mostra como
+	-- notificacao normal por enquanto - o visual de verdade (onde/como aparece na tela) vem depois.
+	do
+		GUI.UltimosKills = {}
+		GUI.TotalKills = 0
+
+		-- HUD fixo do contador de kills - fica direto no ScreenGui principal, entao continua
+		-- visivel mesmo com o menu fechado (M). O toggle na aba Config so mexe em .Visible.
+		GUI.ContadorKillsFrame = Instance.new("Frame")
+		GUI.ContadorKillsFrame.AnchorPoint = Vector2.new(1, 0)
+		GUI.ContadorKillsFrame.Position = UDim2.new(1, -24, 0, 24)
+		GUI.ContadorKillsFrame.Size = UDim2.new(0, 130, 0, 34)
+		GUI.ContadorKillsFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+		GUI.ContadorKillsFrame.BackgroundTransparency = 0.35
+		GUI.ContadorKillsFrame.Active = true
+		GUI.ContadorKillsFrame.Visible = state.contadorKillsAtivo
+		GUI.ContadorKillsFrame.Parent = GUI.Screen
+		Instance.new("UICorner", GUI.ContadorKillsFrame).CornerRadius = UDim.new(0, 10)
+		do
+			local contadorStroke = Instance.new("UIStroke")
+			contadorStroke.Color = Color3.fromRGB(255, 105, 180)
+			contadorStroke.Transparency = 0.7
+			contadorStroke.Thickness = 1
+			contadorStroke.Parent = GUI.ContadorKillsFrame
+		end
+
+		GUI.ContadorKillsLabel = Instance.new("TextLabel")
+		GUI.ContadorKillsLabel.BackgroundTransparency = 1
+		GUI.ContadorKillsLabel.Size = UDim2.new(1, 0, 1, 0)
+		GUI.ContadorKillsLabel.Text = "Kills: 0"
+		GUI.ContadorKillsLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+		GUI.ContadorKillsLabel.Font = Enum.Font.GothamBold
+		GUI.ContadorKillsLabel.TextSize = 16
+		GUI.ContadorKillsLabel.Parent = GUI.ContadorKillsFrame
+
+		-- Arrastar o contador (botao esquerdo) ou zerar ele (botao direito) - globais de
+		-- proposito, pra nao gastar variavel local (o script ja ta no limite de 200).
+		function _G.SkinChangerContadorDragInputBegan(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+				GUI.ContadorArrastando = true
+				GUI.ContadorArrastoInicio = input.Position
+				GUI.ContadorPosicaoInicio = GUI.ContadorKillsFrame.Position
+				input.Changed:Connect(function()
+					if input.UserInputState == Enum.UserInputState.End then
+						GUI.ContadorArrastando = false
+					end
+				end)
+			elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
+				GUI.TotalKills = 0
+				GUI.ContadorKillsLabel.Text = "Kills: 0"
+				GUI:Notify("Contador", "Contador de kills zerado.", 2)
+			end
+		end
+
+		function _G.SkinChangerContadorDragInputChanged(input)
+			if GUI.ContadorArrastando and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+				local delta = input.Position - GUI.ContadorArrastoInicio
+				GUI.ContadorKillsFrame.Position = UDim2.new(
+					GUI.ContadorPosicaoInicio.X.Scale, GUI.ContadorPosicaoInicio.X.Offset + delta.X,
+					GUI.ContadorPosicaoInicio.Y.Scale, GUI.ContadorPosicaoInicio.Y.Offset + delta.Y
+				)
+			end
+		end
+
+		GUI.ContadorKillsFrame.InputBegan:Connect(_G.SkinChangerContadorDragInputBegan)
+		GUI.ContadorKillsFrame.InputChanged:Connect(_G.SkinChangerContadorDragInputChanged)
+		UserInputService.InputChanged:Connect(_G.SkinChangerContadorDragInputChanged)
+
+		function _G.SkinChangerAtualizarContadorKills()
+			GUI.TotalKills = GUI.TotalKills + 1
+			GUI.ContadorKillsLabel.Text = "Kills: " .. GUI.TotalKills
+		end
+		local MAX_KILLS_GUARDADOS = 30
+		local SoundService = game:GetService("SoundService")
+
+		-- Tabela compartilhada com a UI de "Killsounds" da aba Sons (ali voce edita os IDs e
+		-- liga/desliga). Nao redeclara aqui pra nao ter duas copias desincronizadas.
+		local sons = sonsKillstreak
+
+		local function TocarSom(assetId)
+			if not state.killsoundsAtivo then return end
+			if not assetId or assetId == "" then return end
+			local som = Instance.new("Sound")
+			som.SoundId = assetId
+			som.Volume = state.killsoundsVolume or 1
+			som.Parent = SoundService
+			som:Play()
+			game:GetService("Debris"):AddItem(som, 6)
+		end
+
+		-- Tenta separar "Killer (...) killed Vitima with Arma" nas partes.
+		-- Se nao bater com esse formato exato (ex: morte por queda, suicidio, etc.), guarda a
+		-- mensagem inteira crua mesmo assim, sem quebrar nada.
+		local function ParsearMensagemKill(mensagem)
+			local killer, vitima, arma = mensagem:match("^(.-) killed (.-) with (.+)$")
+			if not killer then
+				killer, vitima = mensagem:match("^(.-) killed (.+)$")
+			end
+			return {
+				mensagem = mensagem,
+				killer = killer,
+				vitima = vitima,
+				arma = arma,
+			}
+		end
+
+		-- Placeholder de exibicao - troca isso depois pelo visual de verdade da killfeed.
+		local function ExibirKill(dados)
+			if not state.killfeedAtivo then return end
+			GUI:Notify("Kill", dados.mensagem, 4)
+		end
+
+		-- Contagem de kills seguidas sem morrer, por jogador (baseado so no que passa pelo killfeed).
+		local killsSemMorrer = {}
+
+		-- A mensagem vem tipo "Franciscoll (@lucasgamer6yio) killed ...", entao o "killer" que a
+		-- gente pega inclui o "(@usuario)" junto - por isso NAO da pra comparar so com == aqui,
+		-- tem que procurar o @username (ou o nome) dentro da string toda.
+		function _G.SkinChangerEhJogadorLocal(nomeKiller)
+			if not nomeKiller then return false end
+			if nomeKiller == player.Name or nomeKiller == player.DisplayName then return true end
+			if nomeKiller:find("@" .. player.Name, 1, true) then return true end
+			if nomeKiller:find(player.DisplayName, 1, true) then return true end
+			return false
+		end
+		local jaTeveFirstBlood = false
+
+		local streaksSpree = {
+			{ qtd = 25, som = "deus" },
+			{ qtd = 20, som = "imparavel" },
+			{ qtd = 15, som = "dominando" },
+			{ qtd = 10, som = "rampage" },
+			{ qtd = 5, som = "spree" },
+		}
+
+		local streaksMulti = {
+			[9] = "absurdo",
+			[8] = "ludicro",
+			[7] = "monstro",
+			[6] = "ultra",
+			[5] = "mega",
+			[4] = "multi",
+			[3] = "triplo",
+			[2] = "duplo",
+		}
+
+		local function ChecarStreaks(dados)
+			if not state.killfeedAtivo then return end
+			if not dados.killer then return end
+
+			-- a vitima perde a sequencia dela
+			if dados.vitima then
+				killsSemMorrer[dados.vitima] = 0
+			end
+
+			local n = (killsSemMorrer[dados.killer] or 0) + 1
+			killsSemMorrer[dados.killer] = n
+
+			-- "first blood" e um evento global da partida (a 1a kill de todas, de quem for) -
+			-- entao o flag e consumido aqui em cima, mesmo que quem tenha matado nao seja voce.
+			local ehFirstBlood = not jaTeveFirstBlood
+			jaTeveFirstBlood = true
+
+			-- so toca som (e conta no contador) se quem matou foi VOCE - kills de outras pessoas
+			-- ainda contam pra sequencia delas (pro caso de virar a killfeed visual depois), mas
+			-- nao tocam som nem entram no seu contador.
+			if not _G.SkinChangerEhJogadorLocal(dados.killer) then
+				return
+			end
+
+			if state.contadorKillsAtivo then
+				_G.SkinChangerAtualizarContadorKills()
+			end
+
+			-- Som de kill simples: toca em TODA kill sua, independente de streak (diferente
+			-- dos killsounds acima, que so tocam em double/triple/spree/etc).
+			if state.somDeKillAtivo and state.somDeKillId and state.somDeKillId ~= "" then
+				local somKill = Instance.new("Sound")
+				somKill.SoundId = state.somDeKillId
+				somKill.Volume = state.somDeKillVolume or 1
+				somKill.Parent = SoundService
+				somKill:Play()
+				game:GetService("Debris"):AddItem(somKill, 6)
+			end
+
+			if ehFirstBlood then
+				TocarSom(sons.primeiroSangue)
+				return
+			end
+
+			if streaksMulti[n] then
+				TocarSom(sons[streaksMulti[n]])
+			end
+
+			for _, tier in ipairs(streaksSpree) do
+				if n == tier.qtd then
+					TocarSom(sons[tier.som])
+					break
+				end
+			end
+		end
+
+		local function RegistrarKill(intValue)
+			local dados = ParsearMensagemKill(intValue.Name)
+			table.insert(GUI.UltimosKills, dados)
+			if #GUI.UltimosKills > MAX_KILLS_GUARDADOS then
+				table.remove(GUI.UltimosKills, 1)
+			end
+			ExibirKill(dados)
+			ChecarStreaks(dados)
+		end
+
+		local pastaKillfeed = ReplicatedStorage:FindFirstChild("Killfeed")
+		if pastaKillfeed then
+			pastaKillfeed.ChildAdded:Connect(function(child)
+				if child:IsA("IntValue") then
+					RegistrarKill(child)
+				end
+			end)
+		else
+			warn("[SkinChanger] Pasta 'Killfeed' nao encontrada em ReplicatedStorage - o killfeed nao vai funcionar ate ela existir.")
+		end
+
+		-- Trava extra: zera SUA sequencia (streak) direto quando seu character morre de verdade
+		-- (garante o reset mesmo se a mensagem de morte no killfeed nao bater com o formato
+		-- "X killed Y with Z" - ex: morte por queda, ambiente, etc.)
+		-- O CONTADOR TOTAL de kills (GUI.TotalKills) NAO zera aqui - ele e um total da sessao
+		-- inteira, so zera se voce apertar o botao de reset.
+		-- Globais (nao locais) de proposito - o script ja ta no limite de variaveis locais.
+		function _G.SkinChangerZerarStreakLocal()
+			for chave in pairs(killsSemMorrer) do
+				if _G.SkinChangerEhJogadorLocal(chave) then
+					killsSemMorrer[chave] = 0
+				end
+			end
+		end
+
+		function _G.SkinChangerConectarMorteLocal(character)
+			local humanoid = character:WaitForChild("Humanoid", 5)
+			if humanoid then
+				humanoid.Died:Connect(_G.SkinChangerZerarStreakLocal)
+			end
+		end
+
+		if player.Character then
+			_G.SkinChangerConectarMorteLocal(player.Character)
+		end
+		player.CharacterAdded:Connect(_G.SkinChangerConectarMorteLocal)
+	end
+
+	-- ================= ROUPA PROPRIA (IGNORA UNIFORME DE TIME) =================
+	-- Esconde os coletes de time (por nome) e recarrega a aparencia REAL do seu avatar
+	-- (Shirt/Pants/BodyColors/Accessories) usando Players:CreateHumanoidModelFromUserId -
+	-- que devolve um character temporario com a roupa de verdade pronta, sem precisar de
+	-- InsertService/LoadAsset nem de Humanoid:ApplyDescription (que e bloqueado nesse jogo).
+	-- So clona as pecas do modelo temporario pro seu character real.
+	-- Tudo global/via GUI de proposito, pra nao gastar variavel local (o script ja ta no limite).
+	do
+		-- Nomes dos coletes/uniformes de time que devem ficar invisiveis quando a roupa
+		-- propria estiver ativa. Ajusta essa lista se os nomes do seu jogo forem diferentes.
+		local targetVests = {
+			["VestRiot"] = true,
+			["VestLight"] = true,
+			["VestMafia"] = true,
+		}
+
+		local function EsconderColetes(character)
+			for _, item in ipairs(character:GetChildren()) do
+				if targetVests[item.Name] then
+					if item:IsA("BasePart") then
+						item.Transparency = 1
+					else
+						for _, descendant in ipairs(item:GetDescendants()) do
+							if descendant:IsA("BasePart") then
+								descendant.Transparency = 1
+							end
+						end
+					end
+				end
+			end
+		end
+
+		function _G.SkinChangerAplicarRoupaPropria(character)
+			if not state.roupaPropriaAtiva then return end
+			if not character then return end
+
+			GUI.AplicandoRoupaPropria = true
+			EsconderColetes(character)
+
+			local sucesso, tempModel = pcall(function()
+				return Players:CreateHumanoidModelFromUserId(player.UserId)
+			end)
+
+			if sucesso and tempModel then
+				for _, item in ipairs(tempModel:GetChildren()) do
+					if item:IsA("Accessory") then
+						-- evita empilhar toda vez que reaplica: remove uma copia nossa anterior
+						-- do mesmo acessorio antes de clonar de novo
+						local antigo = character:FindFirstChild(item.Name)
+						if antigo and antigo:IsA("Accessory") and antigo:GetAttribute("SkinChangerRoupaPropria") then
+							antigo:Destroy()
+						end
+						local clone = item:Clone()
+						clone:SetAttribute("SkinChangerRoupaPropria", true)
+						clone.Parent = character
+					elseif item:IsA("Shirt") or item:IsA("Pants") or item:IsA("BodyColors") then
+						local existente = character:FindFirstChildOfClass(item.ClassName)
+						if existente then existente:Destroy() end
+						item:Clone().Parent = character
+					end
+				end
+				tempModel:Destroy()
+				GUI.DescricaoRoupaPropria = true -- marcador de "deu certo", pro checkbox saber
+			else
+				warn("[SkinChanger] Nao consegui recarregar sua roupa: " .. tostring(tempModel))
+				GUI.DescricaoRoupaPropria = false
+			end
+
+			task.wait(0.1)
+			GUI.AplicandoRoupaPropria = false
+		end
+
+		function _G.SkinChangerConectarRoupaPropria(character)
+			_G.SkinChangerAplicarRoupaPropria(character)
+
+			-- Se o jogo equipar um colete de time DEPOIS (ex: ao entrar num time), esconde na hora.
+			character.ChildAdded:Connect(function(child)
+				if targetVests[child.Name] then
+					task.wait()
+					EsconderColetes(character)
+				end
+			end)
+		end
+
+		if player.Character then
+			_G.SkinChangerConectarRoupaPropria(player.Character)
+		end
+		player.CharacterAdded:Connect(_G.SkinChangerConectarRoupaPropria)
+	end
+
+	-- ================= HUD FOFO (aparece so com arma na mao) =================
+	-- Cria as duas imagens e deixa elas visiveis SO enquanto o character tiver uma Tool
+	-- equipada (arma na mao) - some assim que voce guarda a arma. DisplayOrder bem alto
+	-- pra ficar por cima de TODOS os outros GUIs (do jogo e o nosso menu tambem).
+	-- Tudo global/via GUI de proposito, pra nao gastar variavel local (o script ja ta no limite).
+	do
+		GUI.HudFofoGui = Instance.new("ScreenGui")
+		GUI.HudFofoGui.Name = "SkinChangerHudFofo"
+		GUI.HudFofoGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+		GUI.HudFofoGui.ResetOnSpawn = false
+		GUI.HudFofoGui.DisplayOrder = 999999
+		GUI.HudFofoGui.Enabled = false
+		GUI.HudFofoGui.Parent = player.PlayerGui
+
+		local hudFofoImg1 = Instance.new("ImageLabel")
+		hudFofoImg1.Parent = GUI.HudFofoGui
+		hudFofoImg1.BorderSizePixel = 0
+		hudFofoImg1.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		hudFofoImg1.Image = "rbxassetid://6186241511"
+		hudFofoImg1.Size = UDim2.new(0, 73, 0, 75)
+		hudFofoImg1.BorderColor3 = Color3.fromRGB(0, 0, 0)
+		hudFofoImg1.BackgroundTransparency = 1
+		hudFofoImg1.Position = UDim2.new(0.85287, 39, 0.823, 65)
+
+		local hudFofoImg2 = Instance.new("ImageLabel")
+		hudFofoImg2.Parent = GUI.HudFofoGui
+		hudFofoImg2.BorderSizePixel = 0
+		hudFofoImg2.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		hudFofoImg2.Image = "rbxassetid://116095521807791"
+		hudFofoImg2.Size = UDim2.new(0, 116, 0, 111)
+		hudFofoImg2.BorderColor3 = Color3.fromRGB(0, 0, 0)
+		hudFofoImg2.BackgroundTransparency = 1
+		hudFofoImg2.Position = UDim2.new(0.94335, 26, 0.75551, 60)
+
+		-- So fica Enabled se o toggle "HUD Fofo" estiver ligado E o character tiver uma das
+		-- armas DE VERDADE do jogo (lista listaArmasPadrao/armasDoJogoSet) equipada agora mesmo
+		-- (na mao, nao so na mochila) - qualquer outra Tool que nao seja arma do jogo nao conta.
+		local function TemArmaDoJogoNaMao(character)
+			if not character then return false end
+			for _, child in ipairs(character:GetChildren()) do
+				if child:IsA("Tool") and armasDoJogoSet[child.Name] then
+					return true
+				end
+			end
+			return false
+		end
+
+		function _G.SkinChangerAtualizarVisibilidadeHudFofo()
+			local character = player.Character
+			local temArmaNaMao = TemArmaDoJogoNaMao(character)
+			GUI.HudFofoGui.Enabled = state.hudFofoAtivo and temArmaNaMao
+		end
+		GUI.AtualizarVisibilidadeHudFofo = _G.SkinChangerAtualizarVisibilidadeHudFofo
+
+		-- Reage a QUALQUER Tool entrando/saindo da mao (equipar/desequipar).
+		local function ConectarDeteccaoDeArma(character)
+			character.ChildAdded:Connect(function(child)
+				if child:IsA("Tool") then
+					task.defer(_G.SkinChangerAtualizarVisibilidadeHudFofo)
+				end
+			end)
+			character.ChildRemoved:Connect(function(child)
+				if child:IsA("Tool") then
+					task.defer(_G.SkinChangerAtualizarVisibilidadeHudFofo)
+				end
+			end)
+		end
+
+		if player.Character then
+			ConectarDeteccaoDeArma(player.Character)
+		end
+		player.CharacterAdded:Connect(function(character)
+			ConectarDeteccaoDeArma(character)
+			_G.SkinChangerAtualizarVisibilidadeHudFofo()
+		end)
+
+		_G.SkinChangerAtualizarVisibilidadeHudFofo()
+	end
+
+	-- ================= LOGICA DE SKIN =================
+	local function limparDecalsAntigos(objeto)
+		for _, child in ipairs(objeto:GetChildren()) do
+			if child:IsA("Decal") and child.Name == "SkinChangerDecal" then child:Destroy() end
+		end
+	end
+
+	local function AplicarSkinNaPart(objeto, skin)
+		if not objeto:IsA("BasePart") then return end
+		if state.ignorarPartsInvisiveis and objeto.Transparency >= 0.99 then return end
+		objeto.Color = skin.color
+		if skin.material then objeto.Material = skin.material end
+		objeto.Transparency = skin.parteTransparencia or 0
+		if skin.removerTextura then
+			if objeto:IsA("MeshPart") then objeto.TextureID = "" end
+			local sm = objeto:FindFirstChildOfClass("SpecialMesh")
+			if sm then sm.TextureId = "" end
+		end
+		limparDecalsAntigos(objeto)
+		if skin.decalId ~= "" then
+			if skin.metodoTextura == "MeshDireto" then
+				local ok = false
+				if objeto:IsA("MeshPart") then objeto.TextureID = skin.decalId; ok = true end
+				local sm = objeto:FindFirstChildOfClass("SpecialMesh")
+				if sm then sm.TextureId = skin.decalId; ok = true end
+				if not ok then
+					for _, face in ipairs({Enum.NormalId.Front, Enum.NormalId.Back, Enum.NormalId.Top, Enum.NormalId.Bottom, Enum.NormalId.Left, Enum.NormalId.Right}) do
+						local d = Instance.new("Decal"); d.Name = "SkinChangerDecal"
+						d.Face = face; d.Texture = skin.decalId
+						d.Transparency = skin.texturaTransparencia; d.Parent = objeto
+					end
+				end
+			else
+				for _, face in ipairs({Enum.NormalId.Front, Enum.NormalId.Back, Enum.NormalId.Top, Enum.NormalId.Bottom, Enum.NormalId.Left, Enum.NormalId.Right}) do
+					local d = Instance.new("Decal"); d.Name = "SkinChangerDecal"
+					d.Face = face; d.Texture = skin.decalId
+					d.Transparency = skin.texturaTransparencia; d.Parent = objeto
+				end
+			end
+		end
+	end
+
+	local partesAvulsasPorArma = { ["RiotShieldPart"] = "Riot Shield" }
+
+	local function AplicarSkinEmPartesAvulsas(toolName, skin)
+		for partName, armaDona in pairs(partesAvulsasPorArma) do
+			if armaDona == toolName then
+				local c = player.Character
+				local p = c and c:FindFirstChild(partName)
+				if not p then p = workspace:FindFirstChild(partName, true) end
+				if p then AplicarSkinNaPart(p, skin) end
+			end
+		end
+	end
+
+	local function usaFiltroDeParts(tool)
+		if tool.Name ~= toolInspecionada then return false end
+		for _ in pairs(partesSelecionadas) do return true end
+		return false
+	end
+
+	local function aplicarSkinNaArma(tool, silencioso)
+		if not armasAlvo[tool.Name] then return end
+		local skin = skinsPorArma[tool.Name] or state
+		local filtroAtivo = usaFiltroDeParts(tool)
+		for _, objeto in ipairs(tool:GetDescendants()) do
+			if objeto:IsA("BasePart") then
+				if filtroAtivo and not partesSelecionadas[objeto.Name] then
+					-- pula
+				else
+					AplicarSkinNaPart(objeto, skin)
+				end
+			end
+		end
+		AplicarSkinEmPartesAvulsas(tool.Name, skin)
+		local sonsTrocados, sonsConfigurado = AplicarSonsNaArma(tool)
+		local meshesTrocadas, meshesConfigurado = AplicarMeshNaArma(tool)
+
+		-- presets de mesh customizados (ex: Dragon Lore M700)
+		local presetMesh = presetsMesh[tool.Name]
+		if presetMesh and presetMesh.ativo then
+			task.delay(0.05, function() presetMesh.aplicar(tool) end)
+		end
+
+		if not silencioso then
+			GUI:Notify("Skin Changer", "Skin aplicada: " .. tool.Name, 3)
+			if sonsConfigurado then
+				if sonsTrocados > 0 then
+					GUI:Notify("Sons", sonsTrocados .. " som(ns) trocado(s) em " .. tool.Name .. ".", 3)
+				else
+					GUI:Notify("Sons", "Nenhum som bateu com o nome em " .. tool.Name .. " - confira se o objeto ainda existe.", 4)
+				end
+			end
+			if meshesConfigurado then
+				if meshesTrocadas > 0 then
+					GUI:Notify("Meshes", meshesTrocadas .. " mesh(es) trocada(s) em " .. tool.Name .. ".", 3)
+				else
+					GUI:Notify("Meshes", "Nenhuma mesh bateu com o nome em " .. tool.Name .. " - confira se o objeto ainda existe.", 4)
+				end
+			end
+		end
+	end
+
+	function verificarEAplicarSkins(silencioso)
+		local backpack = player:FindFirstChild("Backpack")
+		local character = player.Character
+		if backpack then
+			for _, item in ipairs(backpack:GetChildren()) do
+				if item:IsA("Tool") then aplicarSkinNaArma(item, silencioso) end
+			end
+		end
+		if character then
+			for _, item in ipairs(character:GetChildren()) do
+				if item:IsA("Tool") then aplicarSkinNaArma(item, silencioso) end
+			end
+		end
+	end
+
+	GUI.ApplyBtn.MouseButton1Click:Connect(function() verificarEAplicarSkins(false) end)
+
+	-- ================= AUTOMACOES =================
+	player.CharacterAdded:Connect(function(character)
+		if state.autoAplicarRespawn then
+			wait(1)
+			verificarEAplicarSkins(true)
+			GUI:Notify("Skin Changer", "Skin reaplicada apos respawn.", 3)
+		end
+	end)
+
+	player.CharacterAdded:Connect(function(character)
+		if state.headlessAtivo or state.korbloxAtivo then
+			wait(1)
+			AplicarExtrasVisuais(character)
+		end
+	end)
+
+	local function ConectarAutoEquip(container)
+		if not container then return end
+		container.ChildAdded:Connect(function(child)
+			if not state.autoAplicarEquip then return end
+			if child:IsA("Tool") then
+				wait(0.2); aplicarSkinNaArma(child, true)
+			elseif partesAvulsasPorArma[child.Name] then
+				wait(0.1)
+				local skin = skinsPorArma[partesAvulsasPorArma[child.Name]] or state
+				AplicarSkinNaPart(child, skin)
+			end
+		end)
+	end
+
+	ConectarAutoEquip(player:FindFirstChild("Backpack"))
+	if player.Character then
+		ConectarAutoEquip(player.Character)
+		AplicarExtrasVisuais(player.Character)
+	end
+	player.CharacterAdded:Connect(function(character) ConectarAutoEquip(character) end)
+
+	GUI:Notify("Skin Changer", "Menu v2.1 carregado! Aperte M para abrir/fechar.", 4)
+
+	do
+		-- ponte pro terminal PLGS (comando "skin"): expõe as MESMAS tabelas, não cópias
+		local env = (type(getgenv) == "function" and getgenv()) or _G
+		GUI.State = state
+		GUI.ArmasAlvo = armasAlvo
+		GUI.VerificarEAplicar = verificarEAplicarSkins
+		env.SkinChangerMenu = GUI
+	end
+
+	return GUI
+
+	end)
+
+	if not ok_main then
+		warn("[SkinChanger] ERRO: " .. tostring(err_main))
+		pcall(function()
+			local pg = Players.LocalPlayer:WaitForChild("PlayerGui", 5)
+			if not pg then return end
+			local sg = Instance.new("ScreenGui"); sg.Name = "SkinChangerErro"; sg.Parent = pg
+			local fr = Instance.new("Frame")
+			fr.Size = UDim2.new(0.6, 0, 0, 200)
+			fr.Position = UDim2.new(0.2, 0, 0.3, 0)
+			fr.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+			fr.BorderSizePixel = 0
+			fr.Parent = sg
+			Instance.new("UICorner", fr).CornerRadius = UDim.new(0, 10)
+			local st = Instance.new("UIStroke"); st.Color = Color3.fromRGB(255, 80, 80); st.Thickness = 2; st.Parent = fr
+			local tl = Instance.new("TextLabel")
+			tl.Size = UDim2.new(1, -20, 1, -20)
+			tl.Position = UDim2.new(0, 10, 0, 10)
+			tl.BackgroundTransparency = 1
+			tl.TextColor3 = Color3.fromRGB(255, 120, 120)
+			tl.TextWrapped = true
+			tl.TextXAlignment = Enum.TextXAlignment.Left
+			tl.TextYAlignment = Enum.TextYAlignment.Top
+			tl.TextSize = 14
+			tl.Font = Enum.Font.Gotham
+			tl.Text = "SkinChanger ERRO:\n\n" .. tostring(err_main) .. "\n\nManda esse erro pro dev."
+			tl.Parent = fr
+		end)
+	end
+end
+
 local CMDS = {
 	{cmd = "ui", desc = "Alternar modo de botões", usage = "ui [off]", fn = nil},
 	{cmd = "help", desc = "Mostrar ajuda", usage = "help [comando]", fn = nil},
@@ -15197,11 +19991,15 @@ local function applyProfile(profile)
     if type(profile.skin) == "table" then
         local sc = IY_ENV.SkinChangerMenu
         if type(sc) == "table" and type(sc.State) == "table" then
+            local function fillInPlace(dst, src)
+                for k in pairs(dst) do dst[k] = nil end
+                for k, v in pairs(src) do dst[k] = v end
+            end
             if type(profile.skin.state) == "table" then
-                sc.State = profileSafeDecode(profile.skin.state)
+                fillInPlace(sc.State, profileSafeDecode(profile.skin.state))
             end
             if type(profile.skin.weapons) == "table" and type(sc.ArmasAlvo) == "table" then
-                sc.ArmasAlvo = profileSafeDecode(profile.skin.weapons)
+                fillInPlace(sc.ArmasAlvo, profileSafeDecode(profile.skin.weapons))
             end
             if type(sc.VerificarEAplicar) == "function" then
                 pcall(sc.VerificarEAplicar, false)
