@@ -14400,116 +14400,130 @@ do
     end
 end
 
--- ===================== SILENT AIM (config) =====================
+-- ===================== SILENT AIM =====================
 do
-    local Players = game:GetService("Players")
-    local RunService = game:GetService("RunService")
+    local Players          = game:GetService("Players")
+    local RunService       = game:GetService("RunService")
     local UserInputService = game:GetService("UserInputService")
-    local LocalPlayer = Players.LocalPlayer
+    local LocalPlayer      = Players.LocalPlayer
 
-    local cfg = {
-        enabled = false,
-        fov = 100,
-        hitPart = "Head",
-        teamCheck = true,
-        showFov = true,
-    }
+    if IY_ENV.PLSILENT_CLEANUP then pcall(IY_ENV.PLSILENT_CLEANUP) end
+
+    -- config persiste entre reexecuções (o hook antigo continua lendo esta mesma tabela)
+    local cfg = IY_ENV.PLSILENT or {}
+    if cfg.fov == nil then cfg.fov = 100 end
+    if cfg.hitPart == nil then cfg.hitPart = "Head" end
+    if cfg.teamCheck == nil then cfg.teamCheck = true end
+    if cfg.showFov == nil then cfg.showFov = true end
+    cfg.enabled = false
     IY_ENV.PLSILENT = cfg
 
-    local function LPH_NO_UPVALUES(Function)
-        return function(...) return Function(...) end
+    -- UNKNOWN: nome da função alvo neste build. Confirme no console (ver recipe).
+    local TARGET_NAME = "castRay"
+
+    -- círculo de FOV (opcional: sem Drawing, o silent aim funciona sem círculo)
+    local fovCircle
+    if type(Drawing) == "table" and type(Drawing.new) == "function" then
+        local ok, c = pcall(Drawing.new, "Circle")
+        if ok and c then
+            fovCircle = c
+            c.Visible, c.Filled, c.NumSides = false, false, 64
+            c.Color, c.Transparency = Color3.fromRGB(255, 255, 255), 1
+        end
     end
-
-    local fov_circle = Drawing.new("Circle")
-    fov_circle.Visible = false
-    fov_circle.Color = Color3.fromRGB(255,255,255)
-    fov_circle.Radius = cfg.fov
-    fov_circle.Transparency = 1
-    fov_circle.Filled = false
-    fov_circle.NumSides = 64
-
-    RunService.PreRender:Connect(function()
-        fov_circle.Position = UserInputService:GetMouseLocation()
-        fov_circle.Radius = cfg.fov
-        fov_circle.Visible = cfg.enabled and cfg.showFov
+    local renderConn = RunService.PreRender:Connect(function()
+        if not fovCircle then return end
+        pcall(function()
+            fovCircle.Position = UserInputService:GetMouseLocation()
+            fovCircle.Radius   = cfg.fov
+            fovCircle.Visible  = cfg.enabled and cfg.showFov
+        end)
     end)
 
-    local function get_closest_player(part_name, fov)
-        fov = fov or math.huge
-        local closest_player, closest_position, closest_distance = nil, nil, fov
-        for _, player in Players:GetPlayers() do
-            if player == LocalPlayer then continue end
-            if cfg.teamCheck and player.Team == LocalPlayer.Team then continue end
-            local character = player.Character
-            if not character then continue end
-            local part = character:FindFirstChild(part_name)
-            if not part then continue end
-            local screen_position = workspace.CurrentCamera:WorldToViewportPoint(part.Position)
-            if screen_position.Z <= 0 then continue end
-            local screen_center = UserInputService:GetMouseLocation()
-            local screen_distance = (Vector2.new(screen_position.X, screen_position.Y) - screen_center).Magnitude
-            if screen_distance < closest_distance then
-                closest_player, closest_position, closest_distance = player, part.Position, screen_distance
-            end
+    local function getClosest(partName, fov)
+        local cam = workspace.CurrentCamera
+        if not cam then return nil end
+        local mouse = UserInputService:GetMouseLocation()
+        local bestPlayer, bestPos, bestDist = nil, nil, fov or math.huge
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr == LocalPlayer then continue end
+            if cfg.teamCheck and plr.Team == LocalPlayer.Team then continue end
+            local char = plr.Character
+            local hum  = char and char:FindFirstChildOfClass("Humanoid")
+            local part = char and char:FindFirstChild(partName)
+            if not (hum and part and hum.Health > 0) then continue end
+            local sp = cam:WorldToViewportPoint(part.Position)
+            if sp.Z <= 0 then continue end
+            local d = (Vector2.new(sp.X, sp.Y) - mouse).Magnitude
+            if d < bestDist then bestPlayer, bestPos, bestDist = plr, part.Position, d end
         end
-        return closest_player, closest_position
+        return bestPlayer, bestPos
     end
 
-    -- nuu, esse hook é preso ao castRay EXATO do seu build atual~ se o jogo atualizar
-    -- e isso parar de funcionar: filtergc de novo por uma função com upvalues de
-    -- hit-detection, confirma o nome no console, e troca a string "castRay" abaixo. :3
-    local castRay, oldCastRay
-
-    local function enableSilent()
-        if cfg.enabled then return end
-        local ok, fn = pcall(function()
-            return filtergc("function", {Name = "castRay"}, true)
-        end)
-        if not ok or not fn then
-            cfg.enabled = false
-            if PLX.print then PLX.print("[silent] castRay nao encontrado neste build/executor", PLX.COL.err) end
-            return
-        end
-        castRay = fn
-        oldCastRay = hookfunction(castRay, LPH_NO_UPVALUES(function(...)
-            local closest_player, closest_position = get_closest_player(cfg.hitPart, cfg.fov)
-            if closest_player and closest_position and closest_player.Character then
-                local part = closest_player.Character:FindFirstChild(cfg.hitPart)
-                if part then return part, closest_position end
+    -- hook instalado UMA vez; ligar/desligar só muda cfg.enabled
+    local state = IY_ENV.PLSILENT_HOOK  -- {fn=, old=} se já hookado numa execução anterior
+    local function hookFn(...)
+        if cfg.enabled then
+            local ok, plr, pos = pcall(getClosest, cfg.hitPart, cfg.fov)
+            if ok and plr and pos then
+                local part = plr.Character and plr.Character:FindFirstChild(cfg.hitPart)
+                -- UNKNOWN: formato de retorno do original (part, position) veio do seu código, nao verificado
+                if part then return part, pos end
             end
-            return oldCastRay(...)
-        end))
-        cfg.enabled = true
+        end
+        local old = state and state.old
+        if old then return old(...) end
     end
 
-    local function disableSilent()
+    local function installHook()
+        if state then return true end
+        if type(filtergc) ~= "function" then return false, "filtergc ausente neste executor" end
+        if type(hookfunction) ~= "function" then return false, "hookfunction ausente neste executor" end
+        local ok, fn = pcall(filtergc, "function", {Name = TARGET_NAME}, true)
+        if not ok or type(fn) ~= "function" then
+            return false, TARGET_NAME .. " nao encontrado neste build"
+        end
+        local s = {fn = fn}
+        state = s
+        local ok2, old = pcall(hookfunction, fn, hookFn)
+        if not ok2 or type(old) ~= "function" then
+            state = nil
+            return false, "hookfunction falhou: " .. tostring(old)
+        end
+        s.old = old
+        IY_ENV.PLSILENT_HOOK = s
+        return true
+    end
+
+    IY_ENV.PLSILENT_CLEANUP = function()
         cfg.enabled = false
-        if oldCastRay and castRay then
-            pcall(function() hookfunction(castRay, oldCastRay) end)
-        end
+        if renderConn then renderConn:Disconnect() end
+        if fovCircle then pcall(function() fovCircle:Remove() end) end
     end
+
+    local function tp(t, c) if PLX.print then PLX.print(t, c and PLX.COL and PLX.COL[c] or nil) end end
 
     PLX.silent = function(args)
         local sub = (args[1] or "help"):lower()
         if sub == "help" then
-            if PLX.print then
-                PLX.print("silent on|off          liga/desliga", PLX.COL.info)
-                PLX.print("silent fov <n>         raio do FOV", PLX.COL.info)
-                PLX.print("silent part <nome>     parte alvo (Head, Torso, HumanoidRootPart...)", PLX.COL.info)
-                PLX.print("silent team on|off     ignora/ataca o proprio time", PLX.COL.info)
-                PLX.print("silent circle on|off   mostra/oculta circulo de FOV", PLX.COL.info)
-                PLX.print("silent status", PLX.COL.info)
-            end
+            tp("silent on|off          liga/desliga", "info")
+            tp("silent fov <n>         raio do FOV", "info")
+            tp("silent part <nome>     parte alvo (Head, Torso, HumanoidRootPart...)", "info")
+            tp("silent team on|off     ignora/ataca o proprio time", "info")
+            tp("silent circle on|off   mostra/oculta circulo de FOV", "info")
+            tp("silent status", "info")
             return true, "silent help"
         end
         if sub == "on" then
-            enableSilent()
-            return cfg.enabled, cfg.enabled and "silent aim ligado" or "falhou ao achar castRay"
+            local ok, err = installHook()
+            if not ok then return false, err end
+            cfg.enabled = true
+            return true, "silent aim ligado"
         end
-        if sub == "off" then disableSilent(); return true, "silent aim desligado" end
+        if sub == "off" then cfg.enabled = false; return true, "silent aim desligado" end
         if sub == "fov" then
             local n = tonumber(args[2])
-            if not n then return false, "uso: silent fov <n>" end
+            if not n or n <= 0 then return false, "uso: silent fov <n>" end
             cfg.fov = n
             return true, "fov = " .. n
         end
@@ -14518,129 +14532,26 @@ do
             cfg.hitPart = args[2]
             return true, "hit part = " .. cfg.hitPart
         end
-        if sub == "team" then
+        if sub == "team" or sub == "circle" then
             local v = (args[2] or ""):lower()
-            if v ~= "on" and v ~= "off" then return false, "uso: silent team on|off" end
-            cfg.teamCheck = (v == "on")
-            return true, "team check " .. v
-        end
-        if sub == "circle" then
-            local v = (args[2] or ""):lower()
-            if v ~= "on" and v ~= "off" then return false, "uso: silent circle on|off" end
-            cfg.showFov = (v == "on")
-            return true, "circulo " .. v
+            if v ~= "on" and v ~= "off" then return false, "uso: silent " .. sub .. " on|off" end
+            if sub == "team" then cfg.teamCheck = (v == "on") else cfg.showFov = (v == "on") end
+            return true, sub .. " " .. v
         end
         if sub == "status" then
-            if PLX.print then
-                PLX.print(string.format("silent: %s | fov=%d | part=%s | team=%s | circle=%s",
-                    cfg.enabled and "ON" or "OFF", cfg.fov, cfg.hitPart,
-                    cfg.teamCheck and "on" or "off", cfg.showFov and "on" or "off"), PLX.COL.info)
-            end
+            tp(string.format("silent: %s | hook=%s | fov=%d | part=%s | team=%s | circle=%s | drawing=%s",
+                cfg.enabled and "ON" or "OFF", state and "instalado" or "nao",
+                cfg.fov, cfg.hitPart, cfg.teamCheck and "on" or "off",
+                cfg.showFov and "on" or "off", fovCircle and "ok" or "ausente"), "info")
             return true, "status"
         end
         return false, "subcomando invalido (use: silent help)"
     end
 end
--- log de kill do skin changer ai porra texto grande pra eu ver depois
--- aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-do
-    local Players = game:GetService("Players")
-    local TextChatService = game:GetService("TextChatService")
-
-    local cfg = { enabled = true, max = 6, holdTime = 8 }
-    IY_ENV.PLKILLLOG = cfg
-
-    local gui = Instance.new("ScreenGui")
-    gui.Name = "PL_KillLog"
-    gui.ResetOnSpawn = false
-    pcall(function() gui.Parent = (type(gethui) == "function" and gethui()) or game:GetService("CoreGui") end)
-    if not gui.Parent then gui.Parent = PG end
-
-    local holder = Instance.new("Frame")
-    holder.BackgroundTransparency = 1
-    holder.AnchorPoint = Vector2.new(0.5, 0)
-    holder.Position = UDim2.new(0.5, 0, 0, 60)
-    holder.Size = UDim2.new(0, 420, 0, 160)
-    holder.Parent = gui
-    local layout = Instance.new("UIListLayout")
-    layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-    layout.Padding = UDim.new(0, 2)
-    layout.Parent = holder
-
-    local function addLine(killer, victim, weapon)
-        local row = Instance.new("TextLabel")
-        row.BackgroundTransparency = 1
-        row.Size = UDim2.new(1, 0, 0, 20)
-        row.Font = Enum.Font.SourceSansBold
-        row.TextSize = 16
-        row.TextStrokeTransparency = 0
-        row.RichText = true
-        local w = weapon and (' <font color="#FFD24D">with ' .. weapon .. '</font>') or ""
-        row.Text = string.format('<font color="#FFFFFF">%s</font> <font color="#CCCCCC">killed</font> <font color="#FF5C5C">%s</font>%s', killer, victim, w)
-        row.Parent = holder
-        task.delay(cfg.holdTime, function() if row then row:Destroy() end end)
-        local labels = {}
-        for _, v in ipairs(holder:GetChildren()) do if v:IsA("TextLabel") then table.insert(labels, v) end end
-        if #labels > cfg.max then labels[1]:Destroy() end
-    end
-
-    local function tryParse(msg)
-        local killer, victim, weapon = msg:match("^(.-) killed (.-) with (.+)$")
-        if not killer then killer, victim = msg:match("^(.-) killed (.+)$") end
-        return killer, victim, weapon
-    end
-
-    if not isLegacyChat then
-        TextChatService.MessageReceived:Connect(function(tcm)
-            if not cfg.enabled then return end
-            local ok, text = pcall(function() return tcm.Text end)
-            if ok and text then
-                local killer, victim, weapon = tryParse(text)
-                if killer then addLine(killer, victim, weapon) end
-            end
-        end)
-    else
-        for _, plr in pairs(Players:GetPlayers()) do
-            plr.Chatted:Connect(function(msg)
-                if not cfg.enabled then return end
-                local killer, victim, weapon = tryParse(msg)
-                if killer then addLine(killer, victim, weapon) end
-            end)
-        end
-    end
-
-    local function tp(t, c) if PLX.print then PLX.print(t, c and PLX.COL and PLX.COL[c] or nil) end end
-    PLX.killlog = function(args)
-        local sub = (args[1] or "help"):lower()
-        if sub == "help" then
-            tp("killlog on|off      liga/desliga o painel", "info")
-            tp("killlog max <n>     quantas linhas ficam na tela", "info")
-            tp("killlog time <s>    tempo que cada linha fica visivel", "info")
-            tp("killlog status", "info")
-            return true, "killlog help"
-        end
-        if sub == "on" then cfg.enabled = true; gui.Enabled = true; return true, "killlog ligado" end
-        if sub == "off" then cfg.enabled = false; return true, "killlog desligado" end
-        if sub == "max" then
-            local n = tonumber(args[2]); if not n then return false, "uso: killlog max <n>" end
-            cfg.max = math.clamp(math.floor(n), 1, 15); return true, "max = " .. cfg.max
-        end
-        if sub == "time" then
-            local n = tonumber(args[2]); if not n then return false, "uso: killlog time <s>" end
-            cfg.holdTime = n; return true, "time = " .. n .. "s"
-        end
-        if sub == "status" then
-            tp(string.format("killlog: %s | max=%d | time=%ss", cfg.enabled and "ON" or "OFF", cfg.max, tostring(cfg.holdTime)), "info")
-            return true, "status"
-        end
-        return false, "subcomando invalido (use killlog help)"
-    end
-end
-
 do
     local function tp(t, c) if PLX.print then PLX.print(t, c and PLX.COL and PLX.COL[c] or nil) end end
     PLX.skin = function(args)
-        local SC = getgenv().SkinChangerMenu
+        local SC = IY_ENV.SkinChangerMenu
         local sub = (args[1] or "help"):lower()
         if sub == "help" then
             tp("skin color <r> <g> <b> | <#hex>   cor da skin", "info")
@@ -14652,9 +14563,14 @@ do
             tp("skin status", "info")
             return true, "skin help"
         end
-        if not SC then return false, "Skin Changer nao esta carregado nesse contexto" end
+        if type(SC) ~= "table" then return false, "Skin Changer nao esta carregado nesse contexto" end
+        if type(SC.State) ~= "table" then return false, "estado do Skin Changer indisponivel" end
         if sub == "apply" then
-            if type(SC.VerificarEAplicar) == "function" then SC.VerificarEAplicar(false) end
+            if type(SC.VerificarEAplicar) ~= "function" then
+                return false, "funcao de aplicacao do Skin Changer indisponivel"
+            end
+            local ok, err = pcall(SC.VerificarEAplicar, false)
+            if not ok then return false, "falha ao aplicar skin: " .. tostring(err) end
             return true, "skin aplicada"
         end
         if sub == "color" then
@@ -14674,11 +14590,9 @@ do
         if sub == "texture" then
             local id = args[2]
             if not id then return false, "uso: skin texture <id>" end
-            if not id:match("^rbxassetid://") then
-                local num = id:match("(%d+)")
-                if num then id = "rbxassetid://" .. num end
-            end
-            SC.State.decalId = id
+            local num = id:match("^rbxassetid://(%d+)$") or id:match("^(%d+)$")
+            if not num then return false, "id invalido; use apenas numeros ou rbxassetid://<id>" end
+            SC.State.decalId = "rbxassetid://" .. num
             return true, "textura atualizada (use 'skin apply')"
         end
         if sub == "material" then
@@ -14690,15 +14604,21 @@ do
             return true, "material = " .. nome .. " (use 'skin apply')"
         end
         if sub == "weapon" then
-            local nome, onoff = args[2], (args[3] or ""):lower()
-            if not nome or (onoff ~= "on" and onoff ~= "off") then return false, "uso: skin weapon <nome> on|off" end
+            if type(SC.ArmasAlvo) ~= "table" then return false, "lista de armas do Skin Changer indisponivel" end
+            if #args < 3 then return false, "uso: skin weapon <nome> on|off" end
+            local onoff = (args[#args] or ""):lower()
+            if onoff ~= "on" and onoff ~= "off" then return false, "uso: skin weapon <nome> on|off" end
+            local nome = table.concat(args, " ", 2, #args - 1)
+            if nome == "" then return false, "informe o nome da arma" end
             SC.ArmasAlvo[nome] = (onoff == "on")
             return true, nome .. (onoff == "on" and " marcada" or " desmarcada")
         end
         if sub == "menu" then
             local v = (args[2] or ""):lower()
             if v ~= "on" and v ~= "off" then return false, "uso: skin menu on|off" end
-            if SC.Main then SC.Main.Visible = (v == "on") end
+            if not SC.Main then return false, "janela visual do Skin Changer indisponivel" end
+            local ok, err = pcall(function() SC.Main.Visible = (v == "on") end)
+            if not ok then return false, "falha ao alternar menu: " .. tostring(err) end
             return true, "menu " .. v
         end
         if sub == "status" then
@@ -14715,12 +14635,14 @@ local CMDS = {
 	{cmd = "ui", desc = "Alternar modo de botões", usage = "ui [off]", fn = nil},
 	{cmd = "help", desc = "Mostrar ajuda", usage = "help [comando]", fn = nil},
 	{cmd = "clear", desc = "Limpar o terminal", usage = "clear", fn = nil},
+    {cmd = "config", desc = "Carregar profile ou importar código", usage = "config <rage|legit|normal|nome|code>", fn = nil},
+    {cmd = "configsave", desc = "Salvar/exportar profile", usage = "configsave [nome] | csave [nome]", fn = nil},
+    {cmd = "csave", desc = "Atalho para configsave", usage = "csave [nome]", fn = nil},
     {cmd = "esp", desc = "ESP novo (esp help)", usage = "esp <on|off|color|team|name|health|dist|mode|fill|outline|maxdist|size|status|help>", fn = function(args) return PLX.esp(args) end},
 	{cmd = "gun", desc = "Gun Patcher (gun help)", usage = "gun <status|mode|on|off|set|delay|apply|restore|help>", fn = function(args) return PLX.gun(args) end},
 	{cmd = "skin", desc = "Bridge pro Skin Changer (skin help)", usage = "skin <color|texture|material|weapon|apply|menu|status|help>", fn = function(args) return PLX.skin(args) end},
     {cmd = "escape", desc = "Auto Escape manual (so Inmates)", usage = "escape [stop|status]", fn = function(args) return PLX.escape(args) end},
 	{cmd = "silent", desc = "Silent Aim (silent help)", usage = "silent <on|off|fov|part|team|circle|status|help>", fn = function(args) return PLX.silent(args) end},
-	{cmd = "killlog", desc = "Kill log estilo Prison Life (killlog help)", usage = "killlog <on|off|max|time|status|help>", fn = function(args) return PLX.killlog(args) end}
 }
 
 local CMD_MAP = {}
@@ -15005,7 +14927,9 @@ local UI_TOGGLES = {
     {label = "Infinite Jump", on = "infjump", off = "uninfjump"},
     {label = "Invisible", on = "invisible", off = "visible"},
     {label = "No Rotate", on = "norotate", off = "unnorotate"},
-	{label = "TPTool", command = "tptool"}
+}
+local UI_ACTIONS = {
+    {label = "TPTool", command = "tptool"},
 }
 local toggleStates = {}
 
@@ -15030,6 +14954,290 @@ local function executeIY(command)
     return true
 end
 
+
+-- ── Profiles: export/import de toggles locais e aparência do Skin Changer ──
+-- ESP, Silent Aim e ajustes de armas ficam fora dos profiles deliberadamente.
+local HttpService = game:GetService("HttpService")
+local savedProfiles = {}
+local profileModal
+local profileTextBox
+local profileMode = "export"
+
+local function profileSafeEncode(value, seen)
+    local kind = typeof(value)
+    if kind == "Color3" then
+        return string.format("C:%02X%02X%02X", math.floor(value.R*255+0.5), math.floor(value.G*255+0.5), math.floor(value.B*255+0.5))
+    elseif kind == "EnumItem" then
+        local enumType = tostring(value.EnumType):match("^Enum%.(.+)$") or tostring(value.EnumType)
+        return "E:" .. enumType .. ":" .. value.Name
+    elseif kind == "string" or kind == "number" or kind == "boolean" or value == nil then
+        return value
+    elseif kind == "table" then
+        seen = seen or {}
+        if seen[value] then return nil end
+        seen[value] = true
+        local out = {}
+        for k, v in pairs(value) do
+            local kt = typeof(k)
+            if kt == "string" or kt == "number" then
+                local encoded = profileSafeEncode(v, seen)
+                if encoded ~= nil then out[k] = encoded end
+            end
+        end
+        seen[value] = nil
+        return out
+    end
+    return nil
+end
+
+local function profileSafeDecode(value)
+    if type(value) == "string" then
+        local hex = value:match("^C:(%x%x%x%x%x%x)$")
+        if hex then
+            return Color3.fromRGB(tonumber(hex:sub(1,2),16), tonumber(hex:sub(3,4),16), tonumber(hex:sub(5,6),16))
+        end
+        local enumType, enumName = value:match("^E:([^:]+):(.+)$")
+        if enumType and enumName then
+            local ok, item = pcall(function() return Enum[enumType][enumName] end)
+            if ok and item then return item end
+        end
+        return value
+    elseif type(value) == "table" then
+        local out = {}
+        for k, v in pairs(value) do out[k] = profileSafeDecode(v) end
+        return out
+    end
+    return value
+end
+
+local function prettyProfileJson(raw)
+    local out, depth = {}, 0
+    local inString, escaped = false, false
+    for i = 1, #raw do
+        local ch = raw:sub(i, i)
+        if inString then
+            table.insert(out, ch)
+            if escaped then escaped = false
+            elseif ch == "\\" then escaped = true
+            elseif ch == '"' then inString = false end
+        elseif ch == '"' then
+            inString = true
+            table.insert(out, ch)
+        elseif ch == "{" or ch == "[" then
+            table.insert(out, ch)
+            depth = depth + 1
+            table.insert(out, "\n" .. string.rep("  ", depth))
+        elseif ch == "}" or ch == "]" then
+            depth = math.max(0, depth - 1)
+            table.insert(out, "\n" .. string.rep("  ", depth) .. ch)
+        elseif ch == "," then
+            table.insert(out, ",\n" .. string.rep("  ", depth))
+        elseif ch == ":" then
+            table.insert(out, ": ")
+        else
+            table.insert(out, ch)
+        end
+    end
+    return table.concat(out)
+end
+
+local function profileSnapshot(name)
+    local snapshot = {
+        schema = "PLGS_PROFILE", version = 1, name = name,
+        toggles = {},
+    }
+    for _, entry in ipairs(UI_TOGGLES) do
+        snapshot.toggles[entry.on] = toggleStates[entry.on] == true
+    end
+    local sc = IY_ENV.SkinChangerMenu
+    if type(sc) == "table" and type(sc.State) == "table" then
+        snapshot.skin = {
+            state = profileSafeEncode(sc.State),
+            weapons = profileSafeEncode(sc.ArmasAlvo or {}),
+        }
+    end
+    return snapshot
+end
+
+local function profileModalClose()
+    if profileModal then profileModal:Destroy(); profileModal = nil; profileTextBox = nil end
+end
+
+local function openProfileModal(mode, content, onApply)
+    profileModalClose()
+    profileMode = mode
+    local shade = Instance.new("Frame", win)
+    profileModal = shade
+    shade.Name = "ProfileModal"
+    shade.Size = UDim2.new(1,0,1,0)
+    shade.BackgroundColor3 = Color3.fromRGB(3, 7, 11)
+    shade.BackgroundTransparency = 0.12
+    shade.BorderSizePixel = 0
+    shade.ZIndex = 50
+    local panel = Instance.new("Frame", shade)
+    panel.Size = UDim2.new(1,-38,1,-42)
+    panel.Position = UDim2.new(0,19,0,21)
+    panel.BackgroundColor3 = Color3.fromRGB(12, 22, 31)
+    panel.BorderSizePixel = 0
+    panel.ZIndex = 51
+    Instance.new("UICorner", panel).CornerRadius = UDim.new(0,8)
+    local border = Instance.new("UIStroke", panel)
+    border.Color = Color3.fromRGB(45, 155, 185)
+    border.Thickness = 1
+    local heading = Instance.new("TextLabel", panel)
+    heading.Size = UDim2.new(1,-20,0,28)
+    heading.Position = UDim2.new(0,10,0,7)
+    heading.BackgroundTransparency = 1
+    heading.Text = mode == "export" and "PROFILE // EXPORTAR CONFIGURAÇÃO" or "PROFILE // IMPORTAR CÓDIGO"
+    heading.TextColor3 = Color3.fromRGB(130, 225, 240)
+    heading.Font = Enum.Font.GothamBold
+    heading.TextSize = 12
+    heading.TextXAlignment = Enum.TextXAlignment.Left
+    heading.ZIndex = 52
+    local box = Instance.new("TextBox", panel)
+    profileTextBox = box
+    box.Size = UDim2.new(1,-20,1,-88)
+    box.Position = UDim2.new(0,10,0,39)
+    box.BackgroundColor3 = Color3.fromRGB(5, 12, 18)
+    box.TextColor3 = Color3.fromRGB(195, 230, 235)
+    box.PlaceholderColor3 = Color3.fromRGB(95, 130, 140)
+    box.BorderSizePixel = 0
+    box.ClearTextOnFocus = false
+    box.MultiLine = true
+    box.TextWrapped = true
+    box.TextXAlignment = Enum.TextXAlignment.Left
+    box.TextYAlignment = Enum.TextYAlignment.Top
+    box.Font = Enum.Font.Code
+    box.TextSize = 11
+    box.Text = content or ""
+    box.PlaceholderText = "Cole aqui o código JSON do profile..."
+    box.ZIndex = 52
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0,5)
+    local boxStroke = Instance.new("UIStroke", box)
+    boxStroke.Color = Color3.fromRGB(30, 85, 105)
+    boxStroke.Thickness = 1
+    local function makeButton(label, x, color, callback)
+        local b = Instance.new("TextButton", panel)
+        b.Size = UDim2.new(0,112,0,30)
+        b.Position = UDim2.new(1,x,1,-39)
+        b.AnchorPoint = Vector2.new(1,0)
+        b.BackgroundColor3 = color
+        b.BorderSizePixel = 0
+        b.Text = label
+        b.TextColor3 = Color3.fromRGB(225,245,250)
+        b.Font = Enum.Font.GothamBold
+        b.TextSize = 11
+        b.ZIndex = 52
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0,5)
+        b.MouseButton1Click:Connect(callback)
+        return b
+    end
+    makeButton("FECHAR", -10, Color3.fromRGB(55,65,75), profileModalClose)
+    if mode == "export" then
+        makeButton("COPIAR", -132, Color3.fromRGB(15,105,125), function()
+            local setter = setclipboard or toclipboard
+            if type(setter) == "function" then
+                local ok, err = pcall(setter, box.Text)
+                if ok then println("[profile] código copiado", COL.ok) else println("[profile] cópia falhou: "..tostring(err), COL.err) end
+            else
+                box:CaptureFocus()
+                println("[profile] selecione o texto e use Ctrl+A / Ctrl+C", COL.info)
+            end
+        end)
+    else
+        makeButton("APLICAR", -132, Color3.fromRGB(15,105,125), function()
+            local ok, result = pcall(onApply, box.Text)
+            if ok and result then
+                println("[profile] código importado", COL.ok)
+                profileModalClose()
+            else
+                println("[profile] código inválido: "..tostring(result), COL.err)
+            end
+        end)
+    end
+end
+
+local function applyProfile(profile)
+    if type(profile) ~= "table" or profile.schema ~= "PLGS_PROFILE" or profile.version ~= 1 then
+        return false, "formato de profile incompatível"
+    end
+    if type(profile.toggles) == "table" then
+        for _, entry in ipairs(UI_TOGGLES) do
+            local value = profile.toggles[entry.on]
+            if type(value) == "boolean" and (toggleStates[entry.on] == true) ~= value then
+                if executeIY(value and entry.on or entry.off) then
+                    toggleStates[entry.on] = value
+                end
+            end
+        end
+    end
+    if type(profile.skin) == "table" then
+        local sc = IY_ENV.SkinChangerMenu
+        if type(sc) == "table" and type(sc.State) == "table" then
+            if type(profile.skin.state) == "table" then
+                sc.State = profileSafeDecode(profile.skin.state)
+            end
+            if type(profile.skin.weapons) == "table" and type(sc.ArmasAlvo) == "table" then
+                sc.ArmasAlvo = profileSafeDecode(profile.skin.weapons)
+            end
+            if type(sc.VerificarEAplicar) == "function" then
+                pcall(sc.VerificarEAplicar, false)
+            end
+        end
+    end
+    return true
+end
+
+local function saveProfile(name)
+    name = (name or "custom"):lower()
+    if not name:match("^[%w_-]+$") then return false, "nome inválido; use letras, números, _ ou -" end
+    local profile = profileSnapshot(name)
+    local ok, encoded = pcall(function() return HttpService:JSONEncode(profile) end)
+    if not ok then return false, "não foi possível gerar JSON: "..tostring(encoded) end
+    savedProfiles[name] = profile
+    local folder = "PLGS"
+    local path = folder .. "/profiles/" .. name .. ".json"
+    pcall(function()
+        if type(isfolder) == "function" and type(makefolder) == "function" and not isfolder(folder) then makefolder(folder) end
+        if type(isfolder) == "function" and type(makefolder) == "function" and not isfolder(folder .. "/profiles") then makefolder(folder .. "/profiles") end
+        if type(writefile) == "function" then writefile(path, encoded) end
+    end)
+    openProfileModal("export", prettyProfileJson(encoded))
+    return true, "profile '" .. name .. "' gerado; código aberto na janela"
+end
+
+local function loadProfile(name)
+    name = (name or ""):lower()
+    if not name:match("^[%w_-]+$") then return false, "nome de profile inválido" end
+    local profile = savedProfiles[name]
+    if not profile and type(readfile) == "function" and type(isfile) == "function" then
+        local path = "PLGS/profiles/" .. name .. ".json"
+        local ok, raw = pcall(function() if isfile(path) then return readfile(path) end end)
+        if ok and type(raw) == "string" then
+            local parsed, value = pcall(function() return HttpService:JSONDecode(raw) end)
+            if parsed then profile = value end
+        end
+    end
+    if not profile then return false, "profile não encontrado; crie com configsave " .. name end
+    local ok, err = applyProfile(profile)
+    if not ok then return false, err end
+    return true, "profile '" .. name .. "' aplicado"
+end
+
+local function importProfileCode(raw)
+    local decoded = HttpService:JSONDecode(raw)
+    decoded = profileSafeDecode(decoded)
+    if type(decoded) ~= "table" or decoded.schema ~= "PLGS_PROFILE" then
+        error("esse código não é um profile PLGS compatível")
+    end
+    local name = tostring(decoded.name or "importado"):lower()
+    if not name:match("^[%w_-]+$") then name = "importado" end
+    savedProfiles[name] = decoded
+    local ok, err = applyProfile(decoded)
+    if not ok then error(err) end
+    return true
+end
+
 local function buildBtnPanel()
     for _, child in ipairs(btnPanel:GetChildren()) do
         if not child:IsA("UIGridLayout") and not child:IsA("UIPadding") then child:Destroy() end
@@ -15037,9 +15245,7 @@ local function buildBtnPanel()
 
 	local UI_PLX_TOGGLES = {
 	    {label = "ESP",       on = function() PLX.esp({"on"}) end,            off = function() PLX.esp({"off"}) end,            state = function() return IY_ENV.PLESP and IY_ENV.PLESP.enabled end},
-	    {label = "ESP Arma",  on = function() PLX.esp({"weapon","on"}) end,   off = function() PLX.esp({"weapon","off"}) end,   state = function() return IY_ENV.PLESP and IY_ENV.PLESP.showWeapon end},
 	    {label = "Silent Aim",on = function() PLX.silent({"on"}) end,         off = function() PLX.silent({"off"}) end,         state = function() return IY_ENV.PLSILENT and IY_ENV.PLSILENT.enabled end},
-	    {label = "Kill Log",  on = function() PLX.killlog({"on"}) end,        off = function() PLX.killlog({"off"}) end,        state = function() return IY_ENV.PLKILLLOG and IY_ENV.PLKILLLOG.enabled end},
 	}
 
     for index, entry in ipairs(UI_TOGGLES) do
@@ -15142,8 +15348,12 @@ local function setUIMode(on)
 end
 
 local function syncToggleState(commandText)
-    local first = (commandText or ""):match("^%s*(%S+)")
+    local first, rest = (commandText or ""):match("^%s*(%S+)%s*(.*)$")
     if not first then return end
+    if first:lower() == "iy" then
+        first = (rest or ""):match("^%s*(%S+)")
+        if not first then return end
+    end
     first = first:lower()
     local pairsByCommand = {
         noclip = {"noclip", true}, unnoclip = {"noclip", false},
@@ -15173,6 +15383,26 @@ local function run(raw)
     for w in raw:gmatch("%S+") do table.insert(parts, w) end
     local cmd = parts[1]:lower()
     local args = {table.unpack(parts, 2)}
+
+    if cmd == "configsave" or cmd == "csave" then
+        local ok, msg = saveProfile(args[1] or "custom")
+        println((ok and "✓ " or "✗ ") .. tostring(msg), ok and COL.ok or COL.err)
+        return
+    end
+
+    if cmd == "config" then
+        local target = (args[1] or ""):lower()
+        if target == "code" then
+            openProfileModal("import", "", importProfileCode)
+            println("[profile] cole o JSON exportado e clique em APLICAR", COL.info)
+        elseif target == "" then
+            println("uso: config <rage|legit|normal|nome|code>", COL.yellow)
+        else
+            local ok, msg = loadProfile(target)
+            println((ok and "✓ " or "✗ ") .. tostring(msg), ok and COL.ok or COL.err)
+        end
+        return
+    end
 
     if cmd == "clear" then
         clearOutput(); return
@@ -15222,6 +15452,9 @@ local function run(raw)
             println("  help <comando>  mostra detalhes", COL.muted)
             println("  <comando IY>    executa diretamente, sem prefixo iy", COL.muted)
             println("  ui / ui off     alterna o painel", COL.muted)
+            println("  config <nome>   carrega profile salvo (rage/legit/normal ou nome)", COL.muted)
+            println("  config code     abre janela para importar um código JSON", COL.muted)
+            println("  configsave <nome> / csave <nome>  exporta o profile atual", COL.muted)
             println("  clear           limpa o terminal", COL.muted)
             if #iyNames == 0 then
                 println("[aviso] lista do IY indisponível nesta execução.", COL.err)
@@ -15243,7 +15476,11 @@ local function run(raw)
             println("[IY] motor do Infinite Yield não está disponível", COL.err)
             return
         end
-        IY_EXEC_CMD(iyText, LP, true)
+        local ok, err = pcall(IY_EXEC_CMD, iyText, LP, true)
+        if not ok then
+            println("[IY] falha ao executar: " .. tostring(err), COL.err)
+            return
+        end
         syncToggleState(iyText)
         println("[IY] comando enviado: " .. iyText, COL.ok)
         return
@@ -15253,7 +15490,11 @@ local function run(raw)
     if not entry then
         local iyMatch = (type(IY_FIND_CMD) == "function") and IY_FIND_CMD(cmd) or nil
         if iyMatch and type(IY_EXEC_CMD) == "function" then
-            IY_EXEC_CMD(raw, LP, true)
+            local ok, err = pcall(IY_EXEC_CMD, raw, LP, true)
+            if not ok then
+                println("[IY] falha ao executar: " .. tostring(err), COL.err)
+                return
+            end
             syncToggleState(raw)
             println("[IY] comando enviado: " .. raw, COL.ok)
             return
@@ -15262,8 +15503,14 @@ local function run(raw)
         return
     end
 
-    local ok, msg = entry.fn(args)
-    if ok == false then
+    if type(entry.fn) ~= "function" then
+        println("comando sem função registrada: " .. tostring(cmd), COL.err)
+        return
+    end
+    local callOk, ok, msg = pcall(entry.fn, args)
+    if not callOk then
+        println("erro em '" .. tostring(cmd) .. "': " .. tostring(ok), COL.err)
+    elseif ok == false then
         println("✗ "..tostring(msg), COL.err)
     else
         println("✓ "..tostring(msg), COL.ok)
